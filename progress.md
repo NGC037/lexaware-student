@@ -225,3 +225,13 @@ Verification performed:
 - Added `/api/v1/ready` with safe dependency status and HTTP 503 when unavailable.
 - Added readiness, PostgreSQL, Redis, Alembic, and pgvector tests.
 - Validation: 6 tests passed; Ruff check and formatting checks passed; health and readiness returned HTTP 200.
+
+#### Domain Model Foundation - Completed
+
+- Added UUID-based persistence models for users, roles, user-role assignments, jurisdictions, source metadata, knowledge items and versions, private documents, document access grants, audit events, help resources, and complaints.
+- Added timezone-aware lifecycle timestamps, ownership foreign keys, object-level document access boundaries, publication/review states, soft lifecycle states, indexes, unique constraints, and database checks for document size and positive knowledge versions.
+- Persisted enum values as stable lowercase strings for API and migration compatibility.
+- Added migration `f2168b35f764_establish_core_domain_persistence_models`, reviewed and applied after the pgvector migration.
+- Added ADR 0003 documenting the initial domain slice, privacy boundaries, and assumptions made because the detailed industrial product specification is not present in this checkout.
+- Added integration tests for model creation, relationships, ownership, constraints, PostgreSQL, Redis, Alembic, and pgvector.
+- Validation: 8 tests passed; mypy passed; Ruff check and formatting checks passed; `alembic check` reported no drift; Alembic current is `f2168b35f764`.

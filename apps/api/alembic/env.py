@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 from app.core.config import get_settings
-from app.db.base import Base
+from app.db import models
 
 config = context.config
 
@@ -20,7 +20,7 @@ config.set_main_option(
     settings.database_url.replace("%", "%%"),
 )
 
-target_metadata = Base.metadata
+target_metadata = models.Base.metadata
 
 
 def run_migrations_offline() -> None:
