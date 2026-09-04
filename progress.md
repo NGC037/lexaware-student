@@ -95,7 +95,7 @@ Git initialized:
 
 - [x] Git repository initialized
 - [x] Main branch configured
-- [ ] First commit
+- [x] First commit
 
 ---
 
@@ -123,7 +123,7 @@ Git initialized:
 
 ### In Progress
 
-- [ ] Repository baseline
+| `7bd6d73 ` | Repository baseline | Complete |
 - [ ] `.gitignore`
 - [ ] `.env.example`
 - [ ] `README.md`
