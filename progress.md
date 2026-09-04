@@ -200,7 +200,7 @@ Current local infrastructure:
 
 | Service                 | Port | Status  |
 | ----------------------- | ---: | ------- |
-| PostgreSQL + pgvector   | 5432 | Healthy |
+| PostgreSQL + pgvector   | 5434 | Healthy |
 | Redis                   | 6379 | Healthy |
 | MinIO API               | 9000 | Healthy |
 | MinIO Console           | 9001 | Healthy |
@@ -213,3 +213,15 @@ Verification performed:
 - pgvector extension → `0.8.6`
 - MinIO health check → healthy
 - MinIO private bucket → verified
+
+#### Backend Foundation - Completed
+
+- Resolved local PostgreSQL authentication failure caused by the host PostgreSQL 18 service occupying port 5432; the project now uses local port 5434.
+- Recreated only the PostgreSQL development volume and verified asyncpg authentication.
+- SQLAlchemy async engine, pooled sessions, request-scoped session dependency, and shutdown disposal are configured.
+- Redis async client, health check, and graceful shutdown are configured.
+- Alembic is wired to async PostgreSQL and the application metadata.
+- pgvector migration `19bffc3ace56` applied successfully; extension version `0.8.6` verified.
+- Added `/api/v1/ready` with safe dependency status and HTTP 503 when unavailable.
+- Added readiness, PostgreSQL, Redis, Alembic, and pgvector tests.
+- Validation: 6 tests passed; Ruff check and formatting checks passed; health and readiness returned HTTP 200.
