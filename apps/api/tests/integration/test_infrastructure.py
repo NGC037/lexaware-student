@@ -26,5 +26,5 @@ async def test_alembic_and_pgvector_state() -> None:
         revision = revision_result.scalar_one()
         extension_version = extension_result.scalar_one()
 
-    assert revision == "f2168b35f764"
+    assert revision == "7927febec3bb"
     assert extension_version

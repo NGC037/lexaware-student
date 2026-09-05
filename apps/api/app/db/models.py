@@ -82,9 +82,12 @@ def enum_values(enum_type: type[enum.Enum]) -> list[str]:
 
 class User(TimestampMixin, Base):
     __tablename__ = "users"
+    __allow_unmapped__ = True
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    external_subject: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    # external_subject is reserved for OAuth/SSO integration.
+    # For local password authentication it is NULL; see ADR 0004.
+    external_subject: Mapped[str | None] = mapped_column(String(255), unique=True)
     display_name: Mapped[str | None] = mapped_column(String(200))
     status: Mapped[UserStatus] = mapped_column(
         Enum(UserStatus, name="user_status", values_callable=enum_values),
@@ -92,6 +95,13 @@ class User(TimestampMixin, Base):
         nullable=False,
     )
 
+    # Transient attributes for active request context (not persisted in DB)
+    _raw_token: str | None = None
+    _session_expires_at: str | None = None
+
+    credential: Mapped[UserCredential | None] = relationship(
+        back_populates="user", uselist=False, cascade="all, delete-orphan"
+    )
     roles: Mapped[list[UserRole]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
@@ -344,3 +354,27 @@ class Complaint(TimestampMixin, Base):
 
     reporter: Mapped[User] = relationship(back_populates="complaints")
     jurisdiction: Mapped[Jurisdiction] = relationship(back_populates="complaints")
+
+
+class UserCredential(TimestampMixin, Base):
+    """Stores local-authentication credentials for a user.
+
+    This table is intentionally separate from User so the identity record
+    remains clean for future OAuth/SSO integration.  The email field stores
+    the normalised (lower-cased) address and acts as the login identifier.
+    The password_hash field stores the Argon2id digest — never plaintext.
+
+    Constraint: 1-to-1 with User; deleting a User cascades to this record.
+    """
+
+    __tablename__ = "user_credentials"
+    __table_args__ = (Index("ix_user_credentials_email", "email"),)
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    email: Mapped[str] = mapped_column(String(254), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(512), nullable=False)
+    email_verified: Mapped[bool] = mapped_column(default=False, nullable=False)
+
+    user: Mapped[User] = relationship(back_populates="credential")

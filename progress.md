@@ -235,3 +235,17 @@ Verification performed:
 - Added ADR 0003 documenting the initial domain slice, privacy boundaries, and assumptions made because the detailed industrial product specification is not present in this checkout.
 - Added integration tests for model creation, relationships, ownership, constraints, PostgreSQL, Redis, Alembic, and pgvector.
 - Validation: 8 tests passed; mypy passed; Ruff check and formatting checks passed; `alembic check` reported no drift; Alembic current is `f2168b35f764`.
+
+#### Authentication & Authorization Foundation - Completed
+
+- Established secure identity and authorization infrastructure for student accounts and multi-role operations (student, admin, reviewer, publisher).
+- Added `user_credentials` table (1-to-1 with `users`) storing normalized email addresses and Argon2id password hashes (`argon2-cffi`).
+- Relaxed `User.external_subject` constraint to allow `NULL` values for local password accounts while preserving OAuth/SSO compatibility (ADR 0004).
+- Implemented opaque server-side session tokens in Redis (`auth:session:{token_hash}`), deriving security from cryptographic randomness with instant revocation support on logout.
+- Configured browser session cookie (`lexaware_session`) with `HttpOnly`, `SameSite=Lax`, and `Secure` (production environment) flags, alongside `Authorization: Bearer` support for API clients.
+- Implemented layered rate limiting (source IP + normalized email) backed by Redis sliding window counters to protect against brute-force attacks while accommodating shared college networks.
+- Enforced server-side role-based authorization via reusable FastAPI dependencies (`get_current_user`, `require_authenticated_user`, `require_role`).
+- Added structured audit logging (`audit_events`) for registration (`user.registered`), login success (`auth.login_success`), login failure (`auth.login_failure`), and logout (`auth.logout`). Passwords and token hashes are excluded from audit payload.
+- Added migration `7927febec3bb_add_user_credentials_and_relax_external_subject`, reviewed and applied after `f2168b35f764`.
+- Added ADR 0004 documenting opaque session architecture, token security, Argon2id hashing, and identity separation choices.
+- Validation: 22 tests passed (unit + integration); mypy passed; Ruff check and formatting checks passed; `alembic check` reported no drift; Alembic current is `7927febec3bb`.
