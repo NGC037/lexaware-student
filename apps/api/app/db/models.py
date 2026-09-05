@@ -82,7 +82,6 @@ def enum_values(enum_type: type[enum.Enum]) -> list[str]:
 
 class User(TimestampMixin, Base):
     __tablename__ = "users"
-    __allow_unmapped__ = True
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     # external_subject is reserved for OAuth/SSO integration.
@@ -94,10 +93,6 @@ class User(TimestampMixin, Base):
         default=UserStatus.ACTIVE,
         nullable=False,
     )
-
-    # Transient attributes for active request context (not persisted in DB)
-    _raw_token: str | None = None
-    _session_expires_at: str | None = None
 
     credential: Mapped[UserCredential | None] = relationship(
         back_populates="user", uselist=False, cascade="all, delete-orphan"
@@ -368,7 +363,6 @@ class UserCredential(TimestampMixin, Base):
     """
 
     __tablename__ = "user_credentials"
-    __table_args__ = (Index("ix_user_credentials_email", "email"),)
 
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), primary_key=True

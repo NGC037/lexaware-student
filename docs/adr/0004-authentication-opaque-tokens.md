@@ -1,55 +1,74 @@
-# ADR 0004: Opaque Session Tokens & Local Password Authentication
+# ADR 0004: Opaque Session Tokens, Anti-Enumeration & Authentication Hardening
 
 ## Status
 
-Accepted
+Accepted (Hardened)
 
 ## Context
 
-LexAware Student requires a secure, production-grade identity and authentication foundation. The platform provides sensitive legal awareness and guidance to students. A compromised authentication session or an unrevokable token poses a significant privacy risk.
+LexAware Student provides college students in India with grounded legal awareness, document review assistance, and guided next-step support. A security or privacy compromise—such as session hijacking, credential stuffing, CSRF, or account enumeration—directly undermines the platform's core safety and privacy-by-design promises.
 
-We evaluated two session architectures:
-1. **Stateless JWTs**: Tokens signed by a shared secret (`AUTH_SECRET_KEY`) passed in headers.
-2. **Server-Side Opaque Tokens**: Cryptographically random session tokens stored in Redis with immediate revocation support.
+We evaluated session and credential architectures against OWASP ASVS and NIST SP 800-63B standards to establish an industrial-grade identity foundation.
 
 ## Decisions
 
-### 1. Opaque Session Tokens in Redis over Stateless JWTs
+### 1. Opaque Server-Side Session Tokens over Stateless JWTs
 We selected **opaque server-side session tokens** backed by Redis rather than stateless JWTs.
 
 **Rationale:**
-- **Instant Revocation**: Stateless JWTs cannot be revoked upon logout or account suspension without complex blacklisting. Opaque tokens stored in Redis can be deleted instantly via `DEL auth:session:{token_hash}`.
-- **Security for Sensitive Platforms**: Students querying legal rights or submitting grievances require privacy guarantees. Stolen session credentials must be revokable immediately by the system or user.
-- **Minimal Surface Area**: Redis is already deployed in our local and production infrastructure.
+- **Instant Revocation**: Stateless JWTs cannot be revoked immediately upon logout, credential change, or account suspension without complex distributed blacklists. Opaque tokens stored in Redis are invalidated in O(1) time via `DEL auth:session:{token_hash}`.
+- **Immediate Authorization Updates**: Roles are **not** persisted inside the Redis session payload. User roles and account status are resolved directly from PostgreSQL on every request. Any administrative privilege revocation or account suspension takes effect instantly without awaiting session expiration.
+- **Minimal Session Footprint**: The Redis session payload stores strictly:
+  - `user_id`: UUID of the authenticated user
+  - `created_at`: ISO timestamp of session creation
+  - `expires_at`: ISO timestamp of expiration
+- **ORM Model Cleanliness**: Raw session tokens are never attached to the SQLAlchemy `User` ORM entity or persisted in database records. Active session metadata is carried solely in transient request context (`request.state`).
 
-### 2. Token Security & Hashing
-- **Raw Token**: 32-byte cryptographically secure random token generated via `secrets.token_hex(32)`.
-- **Token Hashing**: Raw tokens are **never** stored in Redis. Only the SHA-256 hash `SHA-256(raw_token)` is used as the Redis key: `auth:session:{token_hash}`.
-- **Session Payload**: Stores minimal metadata (`user_id`, `roles`, `created_at`, `expires_at`). Internal Redis keys and token hashes are never exposed through API responses or log outputs.
-- **Secret Key Handling**: `AUTH_SECRET_KEY` is retained in configuration for future HMAC/webhook signing operations, but is intentionally not used for opaque token generation (which derives security from cryptographic randomness).
+### 2. Token Security & Cryptographic Hashing
+- **Raw Token Generation**: 32-byte cryptographically secure random token generated via `secrets.token_hex(32)`.
+- **Token Hashing**: Raw tokens are **never** stored in Redis. Only the SHA-256 digest `SHA-256(raw_token)` serves as the Redis lookup key: `auth:session:{token_hash}`.
+- **Secret Key Handling**: `AUTH_SECRET_KEY` is retained in configuration for future cryptographic operations (such as webhook verification or signed links), but is deliberately not used for opaque token generation.
 
-### 3. Password Hashing with Argon2id
-- User passwords are hashed using **Argon2id** (`argon2-cffi`), the Password Hashing Competition (PHC) winner and OWASP-recommended default.
-- Plaintext passwords are never stored, logged, or returned in API responses.
-- To prevent timing-based account enumeration, login requests for non-existent accounts trigger a pre-computed dummy Argon2id verification (`verify_dummy_password`).
+### 3. Password Policy & Argon2id Hashing
+- **Argon2id**: Password hashing utilizes `argon2-cffi` configured with PHC and OWASP recommended parameters.
+- **NIST SP 800-63B Compliant Policy**:
+  - Minimum length: **12 characters** (enforced in both Pydantic schemas and service validation).
+  - Maximum length: **128 characters**.
+  - Rejection of common, leaked, and easily guessed passwords.
+  - **No arbitrary composition rules**: mandatory upper/lower/number/symbol combinations are omitted to encourage memorable passphrases with spaces and unicode.
+- **Constant-Time Timing Equalization**: For non-existent accounts, a pre-computed dummy Argon2id hash is verified (`verify_dummy_password`) to equalize execution time and eliminate timing side-channel account enumeration.
 
-### 4. Credential Storage & Identity Separation (`User.external_subject`)
-- Local password credentials are stored in a dedicated `user_credentials` table (1-to-1 relationship with `users`).
-- The `User.external_subject` column is reserved for external identity providers (OAuth/SSO). For local password authentication, `external_subject` remains `NULL`. This keeps the identity model clean for future institutional SSO integration.
+### 4. Anti-Enumeration Protections
+- **Login Uniformity**: Login attempts for non-existent emails, incorrect passwords, and inactive/suspended accounts return the exact same generic HTTP 401 response: `{"detail": "Invalid email or password"}`. Internal audit events record distinct reasons (`invalid_credentials` vs `account_inactive`) without leaking to client responses.
+- **Registration Anti-Enumeration**: Duplicate registration attempts for existing emails do not return an error. The endpoint returns a uniform HTTP 201 response:
+  `{"message": "Registration received. If your email is eligible and not already registered, your account has been created. You may now log in.", "email": normalized_email}`
+  An internal audit event (`user.registration_duplicate_attempted`) is logged with a privacy-preserving hash.
 
-### 5. Cookie Security, CORS, and CSRF Protection
-- **HttpOnly Cookie**: Session tokens are delivered via an `HttpOnly` cookie named `lexaware_session` to prevent access by client-side JavaScript (XSS mitigation).
-- **Secure Flag**: Enabled automatically in production environments (`settings.is_production`).
-- **SameSite=Lax**: Restricts cross-site cookie transmission to mitigate CSRF attacks.
-- **CORS Protection**: `CORSMiddleware` restricts allowed origins strictly to `settings.web_app_url`. Wildcard origins (`*`) are disallowed when `allow_credentials=True`.
+### 5. Failure-Only Layered Rate Limiting & Privacy
+- **Failure-Only Consumption**: The authentication failure quota is consumed **only** upon failed credential verification. Successful logins do not consume failure quota and actively reset any previous failure counters for that account.
+- **PII Protection in Redis Keys**: Account rate-limit keys do not contain plaintext email addresses. Keys use SHA-256 hashes:
+  - Account key: `auth:ratelimit:account:{sha256(normalized_email)}`
+  - Source IP key: `auth:ratelimit:ip:{ip_address}`
+- **Campus Network Protection**: Layered quotas prevent shared college hostel/NAT IPs from locking out unaffected student accounts when one student repeatedly misenters credentials.
+- **Retry-After Header**: HTTP 429 responses include standard `Retry-After` seconds indicating the remaining lockout window.
 
-### 6. Layered Rate Limiting
-- Rate limits are enforced using Redis counters with a 15-minute sliding window (`auth:ratelimit:ip:{ip}` and `auth:ratelimit:email:{email}`).
-- Limits are set intentionally to accommodate shared college networks (hostels, campus Wi-Fi) while preventing brute-force attacks.
+### 6. Robust CSRF Architecture for Cookie Authentication
+- **HttpOnly Session Cookie**: `lexaware_session` is delivered with `HttpOnly`, `SameSite=Lax`, `Secure` (in production), and `Path=/`.
+- **Double-Submit CSRF Protection**:
+  - State-changing cookie requests (`POST`, `PUT`, `PATCH`, `DELETE`) require a matching `lexaware_csrf` cookie and `X-CSRF-Token` header.
+  - CSRF verification uses constant-time comparison (`secrets.compare_digest`).
+  - Origin / Referer validation strictly checks against `settings.web_app_url`.
+- **Bearer Token Exemption**: API clients authenticating with `Authorization: Bearer <token>` are exempt from CSRF checks because Authorization headers are not automatically attached by browsers.
+
+### 7. Database Index Cleanliness & Identity Separation
+- Removed redundant ordinary index `ix_user_credentials_email` via migration `8cba291f6859`, preserving the native PostgreSQL unique constraint on `email`.
+- `User.external_subject` remains `NULL` for local password authentication, keeping the model clean for future institutional SSO / OAuth 2.0 integration.
 
 ## Consequences
 
-- All active sessions are fully stateful and revokable via Redis.
-- Logouts completely invalidate sessions across both client cookie state and backend cache.
-- The `users` table remains uncoupled from local authentication credentials.
-- Future OAuth/SSO can populate `external_subject` without database migrations.
+- Sessions are immediately revokable across both Redis and client cookies.
+- Suspended or deleted accounts cannot access endpoints even if an active session exists.
+- Role changes made by administrators in PostgreSQL take effect immediately.
+- Attackers cannot enumerate student emails via login timing, login responses, or registration responses.
+- Shared-IP campus environments are protected from denial-of-service lockouts.
+- State-changing browser operations are protected against CSRF without breaking Bearer-token API clients.

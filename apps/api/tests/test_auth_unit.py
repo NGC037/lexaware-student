@@ -7,7 +7,7 @@ from app.auth.password import (
     verify_dummy_password,
     verify_password,
 )
-from app.auth.tokens import hash_token
+from app.auth.tokens import generate_csrf_token, hash_identifier, hash_token, verify_csrf_token
 
 
 def test_password_hashing_and_verification() -> None:
@@ -29,21 +29,52 @@ def test_dummy_password_verification() -> None:
 
 
 def test_password_strength_validation() -> None:
-    # Valid password
-    validate_password_strength("StrongP@ssw0rd2026")
+    # 1. 11 characters rejected
+    with pytest.raises(PasswordValidationError, match="at least 12 characters"):
+        validate_password_strength("12345678901")
 
-    # Reject short passwords (< 8 chars)
-    with pytest.raises(PasswordValidationError, match="at least 8 characters"):
-        validate_password_strength("short")
+    # 2. 12 characters accepted
+    validate_password_strength("123456789012_custom")
 
-    # Reject weak/common passwords
+    # 3. 128 characters accepted
+    validate_password_strength("A" * 128)
+
+    # 4. > 128 characters rejected
+    with pytest.raises(PasswordValidationError, match="not exceed 128"):
+        validate_password_strength("A" * 129)
+
+    # 5. Common weak passwords rejected
     with pytest.raises(PasswordValidationError, match="too weak"):
-        validate_password_strength("password123")
+        validate_password_strength("password12345")
+
+    # 6. Unicode / whitespace / passphrase-compatible passwords accepted
+    validate_password_strength("correct horse battery staple")
+    validate_password_strength("न्याय और कानून २०२६ विद्यार्थी")
 
 
-def test_token_hashing() -> None:
+def test_token_and_identifier_hashing() -> None:
     raw_token = "a" * 64
     hashed = hash_token(raw_token)
 
     assert hashed != raw_token
     assert len(hashed) == 64  # SHA-256 hex string length
+
+    # Identifier hashing normalizes and generates 64-character SHA-256 digest
+    email_h1 = hash_identifier("Student@Example.EDU")
+    email_h2 = hash_identifier("student@example.edu")
+    assert email_h1 == email_h2
+    assert len(email_h1) == 64
+    assert "@" not in email_h1
+
+
+def test_csrf_token_generation_and_verification() -> None:
+    token1 = generate_csrf_token()
+    token2 = generate_csrf_token()
+
+    assert len(token1) == 64
+    assert token1 != token2
+
+    assert verify_csrf_token(token1, token1) is True
+    assert verify_csrf_token(token1, token2) is False
+    assert verify_csrf_token(None, token1) is False
+    assert verify_csrf_token(token1, "") is False

@@ -19,13 +19,17 @@ class PasswordValidationError(ValueError):
 COMMON_WEAK_PASSWORDS = {
     "password",
     "password123",
+    "password1234",
+    "password12345",
     "12345678",
     "123456789",
     "1234567890",
+    "123456789012",
     "qwertyuiop",
-    "lexaware123",
-    "admin123",
-    "student123",
+    "qwertyuiopas",
+    "lexaware12345",
+    "admin12345678",
+    "student123456",
 }
 
 
@@ -49,14 +53,16 @@ def verify_dummy_password(password: str) -> bool:
 
 
 def validate_password_strength(password: str) -> None:
-    """Validate password strength according to student usability guidelines.
+    """Validate password strength according to student usability and NIST SP 800-63B guidelines.
 
     Requirements:
-    - Minimum length of 8 characters.
+    - Minimum length of 12 characters.
+    - Maximum length of 128 characters.
     - Rejection of common/obviously weak passwords.
+    - No arbitrary character-class rules (passphrases, unicode, spaces are permitted).
     """
-    if len(password) < 8:
-        raise PasswordValidationError("Password must be at least 8 characters long.")
+    if len(password) < 12:
+        raise PasswordValidationError("Password must be at least 12 characters long.")
 
     if len(password) > 128:
         raise PasswordValidationError("Password must not exceed 128 characters.")

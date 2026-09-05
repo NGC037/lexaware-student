@@ -14,7 +14,14 @@ from app.auth.password import (
     verify_password,
 )
 from app.auth.schemas import RegisterRequest
-from app.auth.tokens import check_rate_limit, create_session, revoke_session
+from app.auth.tokens import (
+    check_login_rate_limit,
+    create_session,
+    hash_identifier,
+    record_login_failure,
+    reset_account_rate_limit,
+    revoke_session,
+)
 from app.db.models import AuditEvent, Role, User, UserCredential, UserRole, UserStatus
 
 
@@ -38,11 +45,16 @@ async def record_audit_event(
     await db.flush()
 
 
-async def register_user(db: AsyncSession, req: RegisterRequest) -> tuple[User, str, list[str]]:
-    """Register a new user with local password credentials."""
+async def register_user(db: AsyncSession, req: RegisterRequest) -> tuple[bool, str]:
+    """Register a new user account with local password credentials.
+
+    Returns:
+        tuple[bool, str]: (is_newly_created, normalized_email)
+        Guarantees uniform external timing and prevents account enumeration.
+    """
     normalized_email = req.email.strip().lower()
 
-    # 1. Validate password strength
+    # 1. Validate password strength against policy
     try:
         validate_password_strength(req.password)
     except PasswordValidationError as e:
@@ -51,17 +63,20 @@ async def register_user(db: AsyncSession, req: RegisterRequest) -> tuple[User, s
             detail=str(e),
         ) from e
 
-    # 2. Check for duplicate email
+    # 2. Check for duplicate email without exposing user existence
     existing_stmt = select(UserCredential).where(UserCredential.email == normalized_email)
     existing_res = await db.execute(existing_stmt)
     if existing_res.scalar_one_or_none():
-        # Prevent duplicate registration without giving away existing user info
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="An account with this email address already exists.",
+        # Account enumeration defense: record internal audit event and return cleanly
+        await record_audit_event(
+            db,
+            action="user.registration_duplicate_attempted",
+            details={"account_hash": hash_identifier(normalized_email)},
         )
+        await db.commit()
+        return False, normalized_email
 
-    # 3. Hash password
+    # 3. Hash password with Argon2id
     pwd_hash = hash_password(req.password)
 
     # 4. Create User and UserCredential
@@ -102,18 +117,7 @@ async def register_user(db: AsyncSession, req: RegisterRequest) -> tuple[User, s
     )
 
     await db.commit()
-
-    # Re-fetch user with relationships loaded
-    user_stmt = (
-        select(User)
-        .where(User.id == user.id)
-        .options(selectinload(User.roles).selectinload(UserRole.role))
-    )
-    user_res = await db.execute(user_stmt)
-    full_user = user_res.scalar_one()
-
-    roles = [ur.role.name for ur in full_user.roles]
-    return full_user, normalized_email, roles
+    return True, normalized_email
 
 
 async def authenticate_user(
@@ -122,18 +126,24 @@ async def authenticate_user(
     """Authenticate user credentials and return a new opaque session token."""
     normalized_email = email.strip().lower()
 
-    # 1. Rate limiting check
-    allowed = await check_rate_limit(ip_address=ip_address, normalized_email=normalized_email)
+    # 1. Rate limiting check (checks failure quota without incrementing yet)
+    allowed, retry_after = await check_login_rate_limit(
+        ip_address=ip_address, normalized_email=normalized_email
+    )
     if not allowed:
         await record_audit_event(
             db,
             action="auth.rate_limited",
-            details={"ip": ip_address},
+            details={
+                "ip": ip_address,
+                "account_hash": hash_identifier(normalized_email),
+            },
         )
         await db.commit()
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many failed authentication attempts. Please try again later.",
+            headers={"Retry-After": str(retry_after)},
         )
 
     # 2. Query user credential with user and roles
@@ -150,6 +160,7 @@ async def authenticate_user(
     if not credential:
         # Dummy verification to equalize timing and prevent account enumeration
         verify_dummy_password(password)
+        await record_login_failure(ip_address, normalized_email)
         await record_audit_event(
             db,
             action="auth.login_failure",
@@ -163,6 +174,7 @@ async def authenticate_user(
 
     # 3. Verify password hash
     if not verify_password(password, credential.password_hash):
+        await record_login_failure(ip_address, normalized_email)
         await record_audit_event(
             db,
             action="auth.login_failure",
@@ -177,8 +189,9 @@ async def authenticate_user(
 
     user = credential.user
 
-    # 4. Check user status
+    # 4. Check user status (inactive / suspended accounts return same external error)
     if user.status != UserStatus.ACTIVE:
+        await record_login_failure(ip_address, normalized_email)
         await record_audit_event(
             db,
             action="auth.login_failure",
@@ -188,14 +201,17 @@ async def authenticate_user(
         await db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Account is inactive or suspended",
+            detail="Invalid email or password",
         )
 
-    # 5. Extract roles and create session
-    roles = [ur.role.name for ur in user.roles]
-    raw_token, expires_at = await create_session(user.id, roles)
+    # 5. Success! Reset failure quota for this account
+    await reset_account_rate_limit(normalized_email)
 
-    # 6. Record audit event
+    # 6. Extract roles and create session in Redis (only storing user_id and expiry)
+    roles = [ur.role.name for ur in user.roles]
+    raw_token, expires_at = await create_session(user.id)
+
+    # 7. Record audit event
     await record_audit_event(
         db,
         action="auth.login_success",

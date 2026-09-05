@@ -8,8 +8,15 @@ class RegisterRequest(BaseModel):
     """Registration request payload."""
 
     email: EmailStr
-    password: str = Field(min_length=8, max_length=128)
+    password: str = Field(min_length=12, max_length=128)
     display_name: str | None = Field(default=None, max_length=200)
+
+
+class RegisterResponse(BaseModel):
+    """Generic registration response preventing account enumeration."""
+
+    message: str
+    email: EmailStr
 
 
 class LoginRequest(BaseModel):
@@ -51,3 +58,9 @@ class MessageResponse(BaseModel):
     """Generic status response."""
 
     message: str
+
+
+class CSRFTokenResponse(BaseModel):
+    """CSRF token response for SPA client."""
+
+    csrf_token: str

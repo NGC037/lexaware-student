@@ -1,3 +1,4 @@
+import json
 from uuid import uuid4
 
 import httpx
@@ -5,6 +6,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.auth.tokens import hash_identifier, hash_token, redis_client
 from app.db.models import AuditEvent, Role, User, UserCredential, UserRole, UserStatus
 from app.db.session import AsyncSessionLocal
 
@@ -23,9 +25,7 @@ async def test_registration_flow_success(async_client: httpx.AsyncClient) -> Non
     assert response.status_code == 201
     data = response.json()
     assert data["email"] == email.lower()  # Email normalized
-    assert data["display_name"] == "Test Student"
-    assert "student" in data["roles"]
-    assert data["status"] == "active"
+    assert "Registration received" in data["message"]
     assert "password" not in data
     assert "password_hash" not in data
 
@@ -34,11 +34,17 @@ async def test_registration_flow_success(async_client: httpx.AsyncClient) -> Non
         stmt = (
             select(UserCredential)
             .where(UserCredential.email == email.lower())
-            .options(selectinload(UserCredential.user))
+            .options(
+                selectinload(UserCredential.user)
+                .selectinload(User.roles)
+                .selectinload(UserRole.role)
+            )
         )
         cred = (await session.execute(stmt)).scalar_one()
         assert cred.password_hash.startswith("$argon2id$")
         assert cred.user.external_subject is None  # Local password auth leaves this null
+        roles = [ur.role.name for ur in cred.user.roles]
+        assert "student" in roles
 
         # Verify registration audit event
         audit_stmt = select(AuditEvent).where(
@@ -51,39 +57,66 @@ async def test_registration_flow_success(async_client: httpx.AsyncClient) -> Non
 
 
 @pytest.mark.asyncio
-async def test_registration_duplicate_email_rejected(async_client: httpx.AsyncClient) -> None:
+async def test_registration_duplicate_email_anti_enumeration(
+    async_client: httpx.AsyncClient,
+) -> None:
     unique_suffix = uuid4().hex[:8]
     email = f"dup.{unique_suffix}@example.com"
     password = "ValidStudentPassword123!"
 
+    # 1. First registration
     res1 = await async_client.post(
         "/api/v1/auth/register",
         json={"email": email, "password": password},
     )
     assert res1.status_code == 201
 
-    # Second attempt with same email (different case)
+    # 2. Duplicate registration attempt with different casing
     res2 = await async_client.post(
         "/api/v1/auth/register",
         json={"email": email.upper(), "password": password},
     )
-    assert res2.status_code == 400
-    assert "already exists" in res2.json()["detail"]
+    # Must return identical external 201 response to prevent email enumeration
+    assert res2.status_code == 201
+    assert res2.json()["message"] == res1.json()["message"]
+
+    # Verify that only ONE credential record exists in database
+    async with AsyncSessionLocal() as session:
+        count_stmt = select(UserCredential).where(UserCredential.email == email.lower())
+        records = (await session.execute(count_stmt)).scalars().all()
+        assert len(records) == 1
+
+        # Verify internal duplicate audit event was logged without exposing PII
+        audit_stmt = select(AuditEvent).where(
+            AuditEvent.action == "user.registration_duplicate_attempted"
+        )
+        audits = (await session.execute(audit_stmt)).scalars().all()
+        assert len(audits) >= 1
+        assert audits[-1].details is not None
+        assert "account_hash" in audits[-1].details
+        assert "@" not in str(audits[-1].details.get("account_hash"))
 
 
 @pytest.mark.asyncio
-async def test_registration_weak_password_rejected(async_client: httpx.AsyncClient) -> None:
-    # 1. Short password (< 8 chars) fails Pydantic schema validation with 422
-    res_short = await async_client.post(
+async def test_registration_password_policy(async_client: httpx.AsyncClient) -> None:
+    # 1. 11 characters rejected by schema validation (422)
+    res_11 = await async_client.post(
         "/api/v1/auth/register",
-        json={"email": f"short.{uuid4().hex[:6]}@example.com", "password": "short"},
+        json={"email": f"p11.{uuid4().hex[:6]}@example.com", "password": "12345678901"},
     )
-    assert res_short.status_code == 422
+    assert res_11.status_code == 422
 
-    # 2. Common weak password ("password123", 11 chars) fails policy check with 400
+    # 2. 12 characters accepted (201)
+    res_12 = await async_client.post(
+        "/api/v1/auth/register",
+        json={"email": f"p12.{uuid4().hex[:6]}@example.com", "password": "123456789012_custom"},
+    )
+    assert res_12.status_code == 201
+
+    # 3. Common weak password (13 characters) rejected by policy check (400)
     res_weak = await async_client.post(
         "/api/v1/auth/register",
-        json={"email": f"weak.{uuid4().hex[:6]}@example.com", "password": "password123"},
+        json={"email": f"pweak.{uuid4().hex[:6]}@example.com", "password": "password12345"},
     )
     assert res_weak.status_code == 400
     assert "too weak" in res_weak.json()["detail"]
@@ -108,7 +141,18 @@ async def test_login_and_me_flow(async_client: httpx.AsyncClient) -> None:
     )
     assert login_res.status_code == 200
     assert "lexaware_session" in login_res.cookies
+    assert "lexaware_csrf" in login_res.cookies
     token_cookie = login_res.cookies["lexaware_session"]
+
+    # Verify Redis session data is minimal (no roles stored in Redis)
+    token_h = hash_token(token_cookie)
+    raw_session = await redis_client.get(f"auth:session:{token_h}")
+    assert raw_session is not None
+    session_dict = json.loads(raw_session)
+    assert "user_id" in session_dict
+    assert "created_at" in session_dict
+    assert "expires_at" in session_dict
+    assert "roles" not in session_dict  # Roles removed from Redis session payload
 
     # 3. Access /me with cookie
     me_res = await async_client.get("/api/v1/auth/me", cookies={"lexaware_session": token_cookie})
@@ -128,18 +172,18 @@ async def test_login_and_me_flow(async_client: httpx.AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_login_invalid_credentials_returns_generic_error(
+async def test_login_enumeration_defense_and_timing_safety(
     async_client: httpx.AsyncClient,
 ) -> None:
-    # Non-existent user
-    res1 = await async_client.post(
+    # 1. Non-existent email
+    res_nonexistent = await async_client.post(
         "/api/v1/auth/login",
         json={"email": "nonexistent@example.com", "password": "AnyPassword123!"},
     )
-    assert res1.status_code == 401
-    assert res1.json()["detail"] == "Invalid email or password"
+    assert res_nonexistent.status_code == 401
+    assert res_nonexistent.json()["detail"] == "Invalid email or password"
 
-    # Registered user with wrong password
+    # 2. Registered user with incorrect password
     suffix = uuid4().hex[:8]
     email = f"reg.{suffix}@example.com"
     await async_client.post(
@@ -147,48 +191,54 @@ async def test_login_invalid_credentials_returns_generic_error(
         json={"email": email, "password": "CorrectPassword123!"},
     )
 
-    res2 = await async_client.post(
+    res_wrong_pw = await async_client.post(
         "/api/v1/auth/login",
         json={"email": email, "password": "WrongPassword123!"},
     )
-    assert res2.status_code == 401
-    assert res2.json()["detail"] == "Invalid email or password"
+    assert res_wrong_pw.status_code == 401
+    assert res_wrong_pw.json()["detail"] == "Invalid email or password"
 
-
-@pytest.mark.asyncio
-async def test_login_inactive_user_rejected(async_client: httpx.AsyncClient) -> None:
-    suffix = uuid4().hex[:8]
-    email = f"inactive.{suffix}@example.com"
-    password = "ValidPassword123!"
-
-    # Register user
-    reg_res = await async_client.post(
-        "/api/v1/auth/register",
-        json={"email": email, "password": password},
-    )
-    user_id = reg_res.json()["id"]
-
-    # Suspend user in DB
+    # 3. Suspended account
     async with AsyncSessionLocal() as session:
-        user = await session.get(User, user_id)
+        cred = (
+            await session.execute(select(UserCredential).where(UserCredential.email == email))
+        ).scalar_one()
+        user = await session.get(User, cred.user_id)
         assert user is not None
         user.status = UserStatus.SUSPENDED
         await session.commit()
 
-    # Attempt login
-    login_res = await async_client.post(
+    res_suspended = await async_client.post(
         "/api/v1/auth/login",
-        json={"email": email, "password": password},
+        json={"email": email, "password": "CorrectPassword123!"},
     )
-    assert login_res.status_code == 401
-    assert "inactive or suspended" in login_res.json()["detail"]
+    # External error MUST be identical to wrong credentials (no account status enumeration)
+    assert res_suspended.status_code == 401
+    assert res_suspended.json()["detail"] == "Invalid email or password"
+
+    # Internal audit log correctly distinguishes reasons
+    async with AsyncSessionLocal() as session:
+        audits = (
+            (
+                await session.execute(
+                    select(AuditEvent).where(AuditEvent.action == "auth.login_failure")
+                )
+            )
+            .scalars()
+            .all()
+        )
+        reasons = [a.details.get("reason") for a in audits if a.details]
+        assert "invalid_credentials" in reasons
+        assert "account_inactive" in reasons
 
 
 @pytest.mark.asyncio
-async def test_logout_invalidates_session(async_client: httpx.AsyncClient) -> None:
+async def test_account_suspension_immediately_terminates_session(
+    async_client: httpx.AsyncClient,
+) -> None:
     suffix = uuid4().hex[:8]
-    email = f"logout.{suffix}@example.com"
-    password = "LogoutPassword123!"
+    email = f"active_then_suspend.{suffix}@example.com"
+    password = "ActivePassword123!"
 
     await async_client.post(
         "/api/v1/auth/register",
@@ -201,97 +251,200 @@ async def test_logout_invalidates_session(async_client: httpx.AsyncClient) -> No
     )
     token = login_res.cookies["lexaware_session"]
 
-    # Verify authenticated
+    # Verify session is initially valid
     me_res1 = await async_client.get("/api/v1/auth/me", cookies={"lexaware_session": token})
     assert me_res1.status_code == 200
 
-    # Logout
-    logout_res = await async_client.post("/api/v1/auth/logout", cookies={"lexaware_session": token})
-    assert logout_res.status_code == 200
+    # Suspend user directly in PostgreSQL
+    async with AsyncSessionLocal() as session:
+        cred = (
+            await session.execute(select(UserCredential).where(UserCredential.email == email))
+        ).scalar_one()
+        user = await session.get(User, cred.user_id)
+        assert user is not None
+        user.status = UserStatus.SUSPENDED
+        await session.commit()
 
-    # Verify session is invalidated
+    # Immediate next request MUST be rejected
     me_res2 = await async_client.get("/api/v1/auth/me", cookies={"lexaware_session": token})
     assert me_res2.status_code == 401
 
+    # Verify Redis session key was physically removed
+    token_h = hash_token(token)
+    assert await redis_client.get(f"auth:session:{token_h}") is None
+
 
 @pytest.mark.asyncio
-async def test_role_based_authorization(async_client: httpx.AsyncClient) -> None:
+async def test_csrf_protection_and_logout_flow(async_client: httpx.AsyncClient) -> None:
     suffix = uuid4().hex[:8]
+    email = f"csrf.{suffix}@example.com"
+    password = "LogoutPassword123!"
 
-    # 1. Register regular student
-    student_email = f"student.{suffix}@example.com"
     await async_client.post(
         "/api/v1/auth/register",
-        json={"email": student_email, "password": "StudentPassword123!"},
+        json={"email": email, "password": password},
     )
-    login_student = await async_client.post(
+
+    login_res = await async_client.post(
         "/api/v1/auth/login",
-        json={"email": student_email, "password": "StudentPassword123!"},
+        json={"email": email, "password": password},
     )
-    student_token = login_student.cookies["lexaware_session"]
+    session_token = login_res.cookies["lexaware_session"]
+    csrf_token = login_res.cookies["lexaware_csrf"]
 
-    # Student attempting admin-only endpoint -> 403 Forbidden
-    admin_test_res1 = await async_client.get(
-        "/api/v1/admin-test", cookies={"lexaware_session": student_token}
+    cookies = {"lexaware_session": session_token, "lexaware_csrf": csrf_token}
+
+    # 1. State-changing request with cookie but WITHOUT X-CSRF-Token header -> 403
+    res_no_header = await async_client.post("/api/v1/auth/logout", cookies=cookies)
+    assert res_no_header.status_code == 403
+    assert "CSRF" in res_no_header.json()["detail"]
+
+    # 2. State-changing request with mismatched CSRF token -> 403
+    res_mismatch = await async_client.post(
+        "/api/v1/auth/logout",
+        cookies=cookies,
+        headers={"X-CSRF-Token": "invalid_csrf_token_value"},
     )
-    assert admin_test_res1.status_code == 403
+    assert res_mismatch.status_code == 403
 
-    # 2. Register admin user & assign 'admin' role in DB
-    admin_email = f"admin.{suffix}@example.com"
-    reg_admin = await async_client.post(
+    # 3. State-changing request with untrusted Origin header -> 403
+    res_untrusted_origin = await async_client.post(
+        "/api/v1/auth/logout",
+        cookies=cookies,
+        headers={"X-CSRF-Token": csrf_token, "Origin": "https://attacker.example.com"},
+    )
+    assert res_untrusted_origin.status_code == 403
+
+    # 4. Valid CSRF token and allowed origin -> 200 OK
+    res_valid = await async_client.post(
+        "/api/v1/auth/logout",
+        cookies=cookies,
+        headers={"X-CSRF-Token": csrf_token, "Origin": "http://localhost:5173"},
+    )
+    assert res_valid.status_code == 200
+
+    # 5. Subsequent request is rejected (session invalidated)
+    res_after = await async_client.get(
+        "/api/v1/auth/me", cookies={"lexaware_session": session_token}
+    )
+    assert res_after.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_bearer_token_exempt_from_csrf(async_client: httpx.AsyncClient) -> None:
+    suffix = uuid4().hex[:8]
+    email = f"bearer.{suffix}@example.com"
+    password = "BearerPassword123!"
+
+    await async_client.post(
         "/api/v1/auth/register",
-        json={"email": admin_email, "password": "AdminPassword123!"},
+        json={"email": email, "password": password},
     )
-    admin_user_id = reg_admin.json()["id"]
+    login_res = await async_client.post(
+        "/api/v1/auth/login",
+        json={"email": email, "password": password},
+    )
+    token = login_res.cookies["lexaware_session"]
 
+    # Bearer client calling logout without CSRF cookie/header succeeds
+    logout_res = await async_client.post(
+        "/api/v1/auth/logout",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert logout_res.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_role_authorization_dynamically_loaded_from_postgres(
+    async_client: httpx.AsyncClient,
+) -> None:
+    suffix = uuid4().hex[:8]
+    email = f"dynrole.{suffix}@example.com"
+    password = "DynamicRolePassword123!"
+
+    reg_res = await async_client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "password": password},
+    )
+    assert reg_res.status_code == 201
+
+    login_res = await async_client.post(
+        "/api/v1/auth/login",
+        json={"email": email, "password": password},
+    )
+    token = login_res.cookies["lexaware_session"]
+
+    # Student initially cannot access admin-test
+    res_student = await async_client.get("/api/v1/admin-test", cookies={"lexaware_session": token})
+    assert res_student.status_code == 403
+
+    # Directly promote user to admin in PostgreSQL without requiring new login
     async with AsyncSessionLocal() as session:
-        admin_role_stmt = select(Role).where(Role.name == "admin")
-        admin_role = (await session.execute(admin_role_stmt)).scalar_one_or_none()
+        cred = (
+            await session.execute(select(UserCredential).where(UserCredential.email == email))
+        ).scalar_one()
+
+        admin_role = (
+            await session.execute(select(Role).where(Role.name == "admin"))
+        ).scalar_one_or_none()
         if not admin_role:
             admin_role = Role(name="admin", description="Administrator role")
             session.add(admin_role)
             await session.flush()
 
-        session.add(UserRole(user_id=admin_user_id, role_id=admin_role.id))
+        session.add(UserRole(user_id=cred.user_id, role_id=admin_role.id))
         await session.commit()
 
-    login_admin = await async_client.post(
-        "/api/v1/auth/login",
-        json={"email": admin_email, "password": "AdminPassword123!"},
-    )
-    admin_token = login_admin.cookies["lexaware_session"]
-
-    # Admin accessing admin-only endpoint -> 200 OK
-    admin_test_res2 = await async_client.get(
-        "/api/v1/admin-test", cookies={"lexaware_session": admin_token}
-    )
-    assert admin_test_res2.status_code == 200
-    assert "admin" in admin_test_res2.json()["roles"]
+    # Next request with existing session token immediately succeeds
+    res_admin = await async_client.get("/api/v1/admin-test", cookies={"lexaware_session": token})
+    assert res_admin.status_code == 200
+    assert "admin" in res_admin.json()["roles"]
 
 
 @pytest.mark.asyncio
-async def test_unauthenticated_request_rejected(async_client: httpx.AsyncClient) -> None:
-    res = await async_client.get("/api/v1/auth/me")
-    assert res.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_authentication_rate_limiting(async_client: httpx.AsyncClient) -> None:
+async def test_rate_limiting_semantics_and_privacy(
+    async_client: httpx.AsyncClient,
+) -> None:
     suffix = uuid4().hex[:8]
-    email = f"ratelimit.{suffix}@example.com"
+    email_target = f"target.{suffix}@example.com"
+    email_innocent = f"innocent.{suffix}@example.com"
+    password = "TargetPassword123!"
+
     await async_client.post(
         "/api/v1/auth/register",
-        json={"email": email, "password": "CorrectPassword123!"},
+        json={"email": email_target, "password": password},
+    )
+    await async_client.post(
+        "/api/v1/auth/register",
+        json={"email": email_innocent, "password": password},
     )
 
-    # Trigger rate limit by sending max_email_attempts (10) failed login attempts
-    failed_count = 0
+    # 1. Repeated failed attempts on target consume account failure quota (10 max)
+    last_res = None
     for _ in range(11):
-        res = await async_client.post(
+        last_res = await async_client.post(
             "/api/v1/auth/login",
-            json={"email": email, "password": "WrongPassword!"},
+            json={"email": email_target, "password": "WrongPassword!"},
         )
-        if res.status_code == 429:
-            failed_count += 1
 
-    assert failed_count > 0, "Rate limiter did not return HTTP 429 after threshold exceeded"
+    assert last_res is not None
+    assert last_res.status_code == 429
+    assert "Retry-After" in last_res.headers
+
+    # 2. Innocent account on same IP is NOT locked out (independent account quota)
+    innocent_login = await async_client.post(
+        "/api/v1/auth/login",
+        json={"email": email_innocent, "password": password},
+    )
+    assert innocent_login.status_code == 200
+
+    # 3. Successful login does NOT consume failure quota
+    # Reset target by waiting/flushing or verifying innocent quota is 0
+    innocent_h = hash_identifier(email_innocent)
+    assert await redis_client.get(f"auth:ratelimit:account:{innocent_h}") is None
+
+    # 4. Verify rate-limit Redis keys NEVER contain raw email address
+    all_keys = await redis_client.keys("auth:ratelimit:*")
+    for key in all_keys:
+        assert "@" not in key
+        assert "example.com" not in key

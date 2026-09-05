@@ -14,16 +14,16 @@ settings = get_settings()
 
 
 class SessionData(BaseModel):
-    """Session data stored in Redis.
+    """Minimal session data stored in Redis.
 
-    Contains only non-sensitive identity metadata needed for request authentication.
-    Internal details like token hashes or Redis keys are never exposed.
+    Contains only essential identity and temporal bounds.
+    Roles and profile data are fetched directly from PostgreSQL on every request
+    to ensure role updates, account status changes, and suspensions take immediate effect.
     """
 
     model_config = ConfigDict(frozen=True)
 
     user_id: str
-    roles: list[str]
     created_at: str
     expires_at: str
 
@@ -36,7 +36,24 @@ def hash_token(raw_token: str) -> str:
     return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
 
 
-async def create_session(user_id: uuid.UUID, roles: list[str]) -> tuple[str, datetime]:
+def hash_identifier(identifier: str) -> str:
+    """Compute SHA-256 hash of a normalized account identifier for privacy-preserving cache keys."""
+    return hashlib.sha256(identifier.strip().lower().encode("utf-8")).hexdigest()
+
+
+def generate_csrf_token() -> str:
+    """Generate a cryptographically secure, random CSRF token."""
+    return secrets.token_hex(32)
+
+
+def verify_csrf_token(cookie_token: str | None, header_token: str | None) -> bool:
+    """Verify CSRF token using constant-time comparison."""
+    if not cookie_token or not header_token:
+        return False
+    return secrets.compare_digest(cookie_token.strip(), header_token.strip())
+
+
+async def create_session(user_id: uuid.UUID) -> tuple[str, datetime]:
     """Create a new opaque session token stored securely in Redis.
 
     Returns:
@@ -51,7 +68,6 @@ async def create_session(user_id: uuid.UUID, roles: list[str]) -> tuple[str, dat
 
     session_payload = SessionData(
         user_id=str(user_id),
-        roles=roles,
         created_at=now.isoformat(),
         expires_at=expires_at.isoformat(),
     )
@@ -104,30 +120,50 @@ async def revoke_session(raw_token: str) -> bool:
     return bool(deleted > 0)
 
 
-async def check_rate_limit(ip_address: str, normalized_email: str | None = None) -> bool:
-    """Check layered authentication rate limits for IP and account identifier.
+async def check_login_rate_limit(ip_address: str, normalized_email: str) -> tuple[bool, int]:
+    """Check whether authentication failure rate limit is exceeded.
 
-    Returns True if allowed, False if limit exceeded.
+    Returns:
+        tuple[bool, int]: (is_allowed, retry_after_seconds)
     """
+    # 1. Check IP failure limit
+    ip_key = f"auth:ratelimit:ip:{ip_address}"
+    ip_count_str = await redis_client.get(ip_key)
+    if ip_count_str and int(ip_count_str) >= settings.auth_rate_limit_max_ip_attempts:
+        ttl = await redis_client.ttl(ip_key)
+        return False, max(int(ttl), 1)
+
+    # 2. Check Account failure limit (using SHA-256 hash of email to protect PII)
+    email_h = hash_identifier(normalized_email)
+    acct_key = f"auth:ratelimit:account:{email_h}"
+    acct_count_str = await redis_client.get(acct_key)
+    if acct_count_str and int(acct_count_str) >= settings.auth_rate_limit_max_email_attempts:
+        ttl = await redis_client.ttl(acct_key)
+        return False, max(int(ttl), 1)
+
+    return True, 0
+
+
+async def record_login_failure(ip_address: str, normalized_email: str) -> None:
+    """Increment failed login counters on IP and account identifier."""
     window = settings.auth_rate_limit_window_seconds
 
-    # 1. IP-based rate limit
+    # 1. Increment IP failure counter
     ip_key = f"auth:ratelimit:ip:{ip_address}"
     ip_count = await redis_client.incr(ip_key)
     if ip_count == 1:
         await redis_client.expire(ip_key, window)
 
-    if ip_count > settings.auth_rate_limit_max_ip_attempts:
-        return False
+    # 2. Increment Account failure counter (privacy-preserving key)
+    email_h = hash_identifier(normalized_email)
+    acct_key = f"auth:ratelimit:account:{email_h}"
+    acct_count = await redis_client.incr(acct_key)
+    if acct_count == 1:
+        await redis_client.expire(acct_key, window)
 
-    # 2. Email-based rate limit (if provided)
-    if normalized_email:
-        email_key = f"auth:ratelimit:email:{normalized_email}"
-        email_count = await redis_client.incr(email_key)
-        if email_count == 1:
-            await redis_client.expire(email_key, window)
 
-        if email_count > settings.auth_rate_limit_max_email_attempts:
-            return False
-
-    return True
+async def reset_account_rate_limit(normalized_email: str) -> None:
+    """Reset account failure quota upon successful authentication."""
+    email_h = hash_identifier(normalized_email)
+    acct_key = f"auth:ratelimit:account:{email_h}"
+    await redis_client.delete(acct_key)
