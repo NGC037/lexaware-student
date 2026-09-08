@@ -9,11 +9,14 @@ from app.core.redis import check_redis_connection
 from app.db.health import check_database_connection
 from app.db.models import User
 from app.db.session import engine
+from app.knowledge.router import admin_knowledge_router, knowledge_router
 
 settings = get_settings()
 
 router = APIRouter()
 router.include_router(auth_router)
+router.include_router(knowledge_router)
+router.include_router(admin_knowledge_router)
 
 
 @router.get(

@@ -255,5 +255,28 @@ Verification performed:
 - Enforced server-side role-based authorization via reusable FastAPI dependencies (`get_current_user`, `require_authenticated_user`, `require_role`).
 - Added structured audit logging (`audit_events`) for registration, login success, login failure, and logout without leaking credentials or secrets.
 - Migrations: `7927febec3bb` (user credentials) and `8cba291f6859` (redundant index cleanup).
-- Documented in ADR 0004.
 - Validation: 23 tests passed (unit + integration); mypy passed in strict mode; Ruff check and formatting checks passed; `alembic check` reported zero drift; Alembic current is `8cba291f6859 (head)`.
+
+### Phase 2 — Knowledge System
+
+#### Chunk 2.1 — Governed Knowledge Domain - Completed
+
+- Implemented industrial-grade governed knowledge domain foundation satisfying Product Specification v1.0 requirements FR-05, FR-06, FR-07, FR-08, FR-26, and FR-27.
+- Expanded database models in `apps/api/app/db/models.py`:
+  - `KnowledgeItem`: category (indexed), topic, audience, and composite index `(jurisdiction_id, category, status)`.
+  - `KnowledgeVersion`: title, summary, applicability_notes, escalation_guidance, temporal windows (`effective_from`, `effective_until`), review tracking (`reviewed_by_id`, `reviewed_at`, `review_due_at`), publication tracking (`published_by_id`, `published_at`), and `change_summary`. Added composite indexes `(effective_from, effective_until)`, `(knowledge_item_id, publication_state)`, and `(review_due_at)`.
+- Applied and verified Alembic migration `45bd284b1395` (`expand_knowledge_governance_schema`).
+- Implemented robust Pydantic schemas in `apps/api/app/knowledge/schemas.py` for item creation/detail, version drafting, review decisions, review schedules, and student read models.
+- Implemented core domain service in `apps/api/app/knowledge/service.py`:
+  - `validate_publication_invariants`: Mandatory gatekeeper enforcing non-empty title, content >= 20 chars, plain-language summary, applicability notes, escalation guidance, active source, and completed formal review before publication.
+  - Immutability enforcement: Direct content edits strictly restricted to versions in `DRAFT` state; revisions to published content enforce creating new sequential versions.
+  - Automatic version superseding: Publishing a new approved version automatically transitions any existing published version to `SUPERSEDED`.
+  - Content review queue (FR-27): `list_stale_reviews` finds published versions where `review_due_at < now()`.
+  - Student read safety boundary: Hard database filters strictly enforcing `status == ACTIVE`, `state == PUBLISHED`, and `effective_from <= now <= effective_until`. Non-published content (drafts, in-review, approved, superseded, archived) is completely invisible.
+  - Structured audit trail: Emits `AuditEvent` records for all lifecycle transitions without duplicating raw article bodies.
+- Implemented API routers in `apps/api/app/knowledge/router.py` and mounted in `apps/api/app/api/router.py`:
+  - Public Student Router (`/api/v1/knowledge`): `/articles`, `/articles/{slug}`, `/categories`, `/jurisdictions`.
+  - Governance Admin Router (`/api/v1/admin/knowledge`): Role-protected endpoints for jurisdictions, sources, items, versions, review submissions, review decisions, publication, archiving/unpublishing, freshness review scheduling, and stale review queues.
+- Added comprehensive integration test suite `apps/api/tests/integration/test_knowledge.py` covering all lifecycle states, invariant enforcement, unauthorized role attempts, search, category counting, automatic superseding, and stale review scheduling.
+- Documented in ADR 0005 (`docs/adr/0005-governed-knowledge-domain.md`).
+- Validation: 28 tests passed across full test suite; mypy passed in strict mode; Ruff check and formatting checks passed with 0 errors; `alembic check` reported zero drift; Alembic current is `45bd284b1395 (head)`.

@@ -177,11 +177,27 @@ class Source(TimestampMixin, Base):
 
 class KnowledgeItem(TimestampMixin, Base):
     __tablename__ = "knowledge_items"
-    __table_args__ = (Index("ix_knowledge_items_jurisdiction_status", "jurisdiction_id", "status"),)
+    __table_args__ = (
+        Index("ix_knowledge_items_jurisdiction_status", "jurisdiction_id", "status"),
+        Index("ix_knowledge_items_category", "category"),
+        Index(
+            "ix_knowledge_items_jurisdiction_category_status",
+            "jurisdiction_id",
+            "category",
+            "status",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     jurisdiction_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("jurisdictions.id", ondelete="RESTRICT"), nullable=False
+    )
+    category: Mapped[str] = mapped_column(
+        String(80), nullable=False, default="general", server_default="general"
+    )
+    topic: Mapped[str | None] = mapped_column(String(120))
+    audience: Mapped[str] = mapped_column(
+        String(60), nullable=False, default="students", server_default="students"
     )
     slug: Mapped[str] = mapped_column(String(160), unique=True, nullable=False)
     title: Mapped[str] = mapped_column(String(300), nullable=False)
@@ -205,6 +221,9 @@ class KnowledgeVersion(TimestampMixin, Base):
         ),
         CheckConstraint("version_number > 0", name="ck_knowledge_versions_positive_number"),
         Index("ix_knowledge_versions_publication_state", "publication_state"),
+        Index("ix_knowledge_versions_item_state", "knowledge_item_id", "publication_state"),
+        Index("ix_knowledge_versions_effective_dates", "effective_from", "effective_until"),
+        Index("ix_knowledge_versions_review_due_at", "review_due_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -215,17 +234,33 @@ class KnowledgeVersion(TimestampMixin, Base):
         ForeignKey("sources.id", ondelete="RESTRICT"), nullable=False
     )
     version_number: Mapped[int] = mapped_column(nullable=False)
+    title: Mapped[str] = mapped_column(String(300), nullable=False, default="", server_default="")
+    summary: Mapped[str | None] = mapped_column(Text)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    applicability_notes: Mapped[str | None] = mapped_column(Text)
+    escalation_guidance: Mapped[str | None] = mapped_column(Text)
     publication_state: Mapped[PublicationState] = mapped_column(
         Enum(PublicationState, name="publication_state", values_callable=enum_values),
         default=PublicationState.DRAFT,
         nullable=False,
     )
+    effective_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    effective_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    review_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    published_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    change_summary: Mapped[str | None] = mapped_column(String(500))
 
     knowledge_item: Mapped[KnowledgeItem] = relationship(back_populates="versions")
     source: Mapped[Source] = relationship(back_populates="knowledge_versions")
+    reviewed_by: Mapped[User | None] = relationship(foreign_keys=[reviewed_by_id])
+    published_by: Mapped[User | None] = relationship(foreign_keys=[published_by_id])
 
 
 class Document(TimestampMixin, Base):
