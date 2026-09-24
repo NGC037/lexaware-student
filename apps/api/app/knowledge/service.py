@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import HTTPException, status
-from sqlalchemy import desc, func, literal, or_, select
+from sqlalchemy import desc, func, literal, select
 from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -18,6 +18,7 @@ from app.db.models import (
     PublicationState,
     Source,
 )
+from app.knowledge.eligibility import student_knowledge_eligibility
 from app.knowledge.schemas import (
     CategorySummary,
     JurisdictionCreate,
@@ -679,24 +680,7 @@ async def get_student_articles(
         .join(KnowledgeVersion, KnowledgeItem.id == KnowledgeVersion.knowledge_item_id)
         .join(Jurisdiction, KnowledgeItem.jurisdiction_id == Jurisdiction.id)
         .join(Source, KnowledgeVersion.source_id == Source.id)
-        .where(
-            KnowledgeItem.status == KnowledgeStatus.ACTIVE,
-            KnowledgeVersion.publication_state == PublicationState.PUBLISHED,
-            KnowledgeVersion.reviewed_at.is_not(None),
-            KnowledgeVersion.reviewed_by_id.is_not(None),
-            or_(KnowledgeVersion.review_due_at.is_(None), KnowledgeVersion.review_due_at > now),
-            Source.is_active.is_(True),
-            or_(Source.effective_from.is_(None), Source.effective_from <= now),
-            or_(Source.effective_until.is_(None), Source.effective_until > now),
-            or_(
-                KnowledgeVersion.effective_from.is_(None),
-                KnowledgeVersion.effective_from <= now,
-            ),
-            or_(
-                KnowledgeVersion.effective_until.is_(None),
-                KnowledgeVersion.effective_until >= now,
-            ),
-        )
+        .where(*student_knowledge_eligibility(now))
     )
 
     if jurisdiction_code:
@@ -771,25 +755,7 @@ async def get_student_article_by_slug(db: AsyncSession, slug: str) -> StudentArt
         .join(KnowledgeVersion, KnowledgeItem.id == KnowledgeVersion.knowledge_item_id)
         .join(Jurisdiction, KnowledgeItem.jurisdiction_id == Jurisdiction.id)
         .join(Source, KnowledgeVersion.source_id == Source.id)
-        .where(
-            KnowledgeItem.slug == slug_norm,
-            KnowledgeItem.status == KnowledgeStatus.ACTIVE,
-            KnowledgeVersion.publication_state == PublicationState.PUBLISHED,
-            KnowledgeVersion.reviewed_at.is_not(None),
-            KnowledgeVersion.reviewed_by_id.is_not(None),
-            or_(KnowledgeVersion.review_due_at.is_(None), KnowledgeVersion.review_due_at > now),
-            Source.is_active.is_(True),
-            or_(Source.effective_from.is_(None), Source.effective_from <= now),
-            or_(Source.effective_until.is_(None), Source.effective_until > now),
-            or_(
-                KnowledgeVersion.effective_from.is_(None),
-                KnowledgeVersion.effective_from <= now,
-            ),
-            or_(
-                KnowledgeVersion.effective_until.is_(None),
-                KnowledgeVersion.effective_until >= now,
-            ),
-        )
+        .where(KnowledgeItem.slug == slug_norm, *student_knowledge_eligibility(now))
     )
     result = (await db.execute(stmt)).first()
     if not result:
@@ -830,24 +796,7 @@ async def get_student_categories(
         .join(KnowledgeVersion, KnowledgeItem.id == KnowledgeVersion.knowledge_item_id)
         .join(Jurisdiction, KnowledgeItem.jurisdiction_id == Jurisdiction.id)
         .join(Source, KnowledgeVersion.source_id == Source.id)
-        .where(
-            KnowledgeItem.status == KnowledgeStatus.ACTIVE,
-            KnowledgeVersion.publication_state == PublicationState.PUBLISHED,
-            KnowledgeVersion.reviewed_at.is_not(None),
-            KnowledgeVersion.reviewed_by_id.is_not(None),
-            or_(KnowledgeVersion.review_due_at.is_(None), KnowledgeVersion.review_due_at > now),
-            Source.is_active.is_(True),
-            or_(Source.effective_from.is_(None), Source.effective_from <= now),
-            or_(Source.effective_until.is_(None), Source.effective_until > now),
-            or_(
-                KnowledgeVersion.effective_from.is_(None),
-                KnowledgeVersion.effective_from <= now,
-            ),
-            or_(
-                KnowledgeVersion.effective_until.is_(None),
-                KnowledgeVersion.effective_until >= now,
-            ),
-        )
+        .where(*student_knowledge_eligibility(now))
     )
     if jurisdiction_code:
         stmt = stmt.where(func.lower(Jurisdiction.code) == jurisdiction_code.strip().lower())

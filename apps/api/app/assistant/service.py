@@ -4,6 +4,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.assistant.classifier import classify_request
@@ -32,8 +33,11 @@ from app.assistant.schemas import (
 from app.auth.service import record_audit_event
 from app.db.models import AuditEvent, Jurisdiction
 from app.help.service import list_student_help_resources
+from app.knowledge.rag.config import RetrievalConfig
+from app.knowledge.rag.embeddings import EmbeddingProvider, EmbeddingProviderError
+from app.knowledge.rag.retrieval import RetrievalState
 
-RETRIEVAL_VERSION = "postgres-fts-v1"
+RETRIEVAL_VERSION = RetrievalConfig().version
 
 
 def _response(
@@ -51,6 +55,8 @@ def _response(
     knowledge_references: list[str] | None = None,
     failure_category: AssistantErrorCode | None = None,
     validation: dict[str, bool] | None = None,
+    retrieval_state: str = "not_run",
+    retrieval_version: str = RETRIEVAL_VERSION,
 ) -> AssistantResponse:
     now = datetime.now(UTC)
     return AssistantResponse(
@@ -74,7 +80,8 @@ def _response(
             prompt_id=PROMPT_METADATA.prompt_id,
             prompt_version=PROMPT_METADATA.version,
             response_schema_version=PROMPT_METADATA.response_schema_version,
-            retrieval_version=RETRIEVAL_VERSION,
+            retrieval_version=retrieval_version,
+            retrieval_state=retrieval_state,
             provider_name=provider_name,
             model_identifier=model_identifier,
             knowledge_references=knowledge_references or [],
@@ -110,6 +117,7 @@ async def _record_trace(
             "prompt_id": trace.prompt_id,
             "prompt_version": trace.prompt_version,
             "retrieval_version": trace.retrieval_version,
+            "retrieval_state": trace.retrieval_state,
             "knowledge_references": trace.knowledge_references,
             "validation_outcomes": trace.validation_outcomes,
             "failure_category": trace.failure_category.value if trace.failure_category else None,
@@ -134,8 +142,11 @@ async def handle_assistant_request(
     request: AssistantRequest,
     provider: AIProvider,
     correlation_id: uuid.UUID,
+    embedding_provider: EmbeddingProvider,
+    retrieval_config: RetrievalConfig | None = None,
 ) -> AssistantResponse:
     started = datetime.now(UTC)
+    selected_retrieval_config = retrieval_config or RetrievalConfig()
     classification = classify_request(request)
     decision = select_route(classification)
     error: AssistantErrorCode | None = None
@@ -146,6 +157,7 @@ async def handle_assistant_request(
     references: list[str] = []
     validation: dict[str, bool] = {"safety_gate": True}
     failure: AssistantErrorCode | None = None
+    retrieval_state = "not_run"
     response_status = decision.route
 
     jurisdiction = None
@@ -213,6 +225,11 @@ async def handle_assistant_request(
         error = AssistantErrorCode.OUT_OF_SCOPE
         message = "I can help with general legal awareness and student support topics."
     elif response_status == AssistantStatus.CLARIFY:
+        if classification.jurisdiction_state in {
+            JurisdictionState.REQUIRED,
+            JurisdictionState.MISMATCH,
+        }:
+            retrieval_state = "jurisdiction_required"
         message = (
             "Please provide a supported jurisdiction code so I can look for applicable, "
             "current guidance."
@@ -225,22 +242,47 @@ async def handle_assistant_request(
         if jurisdiction is None:
             response_status = AssistantStatus.CLARIFY
             error = AssistantErrorCode.INVALID_REQUEST
+            retrieval_state = "jurisdiction_required"
             message = (
                 "Please provide a supported jurisdiction code so I can look for "
                 "applicable guidance."
             )
         else:
-            candidates = await retrieve_governed_context(db, request)
+            try:
+                retrieval = await retrieve_governed_context(
+                    db, request, embedding_provider, selected_retrieval_config
+                )
+            except EmbeddingProviderError, SQLAlchemyError:
+                retrieval_state = "failure"
+                response_status = AssistantStatus.RETRIEVAL_UNAVAILABLE
+                error = AssistantErrorCode.RETRIEVAL_UNAVAILABLE
+                failure = error
+                message = "Current guidance could not be searched safely. Please try again later."
+                validation["retrieval_available"] = False
+                retrieval = None
+            if retrieval is None:
+                candidates = []
+            else:
+                retrieval_state = retrieval.state.value
+                candidates = [candidate.grounding for candidate in retrieval.candidates]
             references = [candidate.reference_key for candidate in candidates]
-            if not candidates:
+            if retrieval is not None and retrieval.state == RetrievalState.JURISDICTION_REQUIRED:
+                retrieval_state = "jurisdiction_required"
+                response_status = AssistantStatus.CLARIFY
+                error = AssistantErrorCode.INVALID_REQUEST
+                message = (
+                    "Please provide a supported jurisdiction code so I can look for applicable "
+                    "guidance."
+                )
+            elif retrieval is not None and not candidates:
                 response_status = AssistantStatus.CLARIFY
                 error = AssistantErrorCode.GROUNDING_FAILED
                 failure = error
                 message = (
                     "I could not find current approved guidance for that question and jurisdiction."
                 )
-                validation["retrieval_available"] = False
-            else:
+                validation["retrieval_available"] = True
+            elif retrieval is not None:
                 try:
                     provider_request = ProviderRequest(
                         system_instructions=load_system_instructions(),
@@ -286,7 +328,8 @@ async def handle_assistant_request(
                             prompt_id=PROMPT_METADATA.prompt_id,
                             prompt_version=PROMPT_METADATA.version,
                             response_schema_version=PROMPT_METADATA.response_schema_version,
-                            retrieval_version=RETRIEVAL_VERSION,
+                            retrieval_version=selected_retrieval_config.version,
+                            retrieval_state="grounded",
                             provider_name=provider_name,
                             model_identifier=model_identifier,
                             knowledge_references=references,
@@ -327,6 +370,8 @@ async def handle_assistant_request(
         knowledge_references=references,
         failure_category=failure,
         validation=validation,
+        retrieval_state=retrieval_state,
+        retrieval_version=selected_retrieval_config.version,
     )
     await _record_trace(db, actor_id, result, provider_name, model_identifier)
     return result

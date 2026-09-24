@@ -4,6 +4,7 @@ import enum
 import uuid
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
     CheckConstraint,
@@ -22,6 +23,7 @@ from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.knowledge.rag.config import RetrievalConfig
 
 
 class TimestampMixin:
@@ -276,6 +278,53 @@ class KnowledgeVersion(TimestampMixin, Base):
     source: Mapped[Source] = relationship(back_populates="knowledge_versions")
     reviewed_by: Mapped[User | None] = relationship(foreign_keys=[reviewed_by_id])
     published_by: Mapped[User | None] = relationship(foreign_keys=[published_by_id])
+
+
+class KnowledgeChunk(TimestampMixin, Base):
+    """Internal indexed passage; visibility is always resolved through live parent rows."""
+
+    __tablename__ = "knowledge_chunks"
+    __table_args__ = (
+        CheckConstraint("ordinal >= 0", name="ck_knowledge_chunks_nonnegative_ordinal"),
+        CheckConstraint(
+            "embedding_dimension = 384", name="ck_knowledge_chunks_embedding_dimension"
+        ),
+        UniqueConstraint(
+            "knowledge_version_id",
+            "chunking_version",
+            "section_key",
+            "ordinal",
+            name="uq_knowledge_chunks_version_section_ordinal",
+        ),
+        Index("ix_knowledge_chunks_version", "knowledge_version_id"),
+        Index("ix_knowledge_chunks_model", "embedding_model", "embedding_dimension"),
+        Index(
+            "ix_knowledge_chunks_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    knowledge_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("knowledge_versions.id", ondelete="CASCADE"), nullable=False
+    )
+    section_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    section_title: Mapped[str] = mapped_column(String(200), nullable=False)
+    ordinal: Mapped[int] = mapped_column(nullable=False)
+    chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    chunking_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    indexed_version_updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    embedding_model: Mapped[str] = mapped_column(String(160), nullable=False)
+    embedding_dimension: Mapped[int] = mapped_column(nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(
+        Vector(RetrievalConfig().embedding_dimension), nullable=False
+    )
+    knowledge_version: Mapped[KnowledgeVersion] = relationship()
 
 
 class Document(TimestampMixin, Base):

@@ -22,6 +22,8 @@ from app.assistant.service import handle_assistant_request
 from app.auth.dependencies import require_authenticated_user, verify_csrf_protection
 from app.db.models import User
 from app.db.session import get_db_session
+from app.knowledge.rag.config import RetrievalConfig
+from app.knowledge.rag.embeddings import DisabledEmbeddingProvider, EmbeddingProvider
 
 
 class AssistantRoute(APIRoute):
@@ -57,6 +59,16 @@ def get_ai_provider() -> AIProvider:
     return DisabledProvider()
 
 
+def get_embedding_provider() -> EmbeddingProvider:
+    """Fail closed until a production embedding adapter is explicitly configured."""
+    return DisabledEmbeddingProvider()
+
+
+def get_retrieval_config() -> RetrievalConfig:
+    """Return the immutable default config; deployments can inject a matching model version."""
+    return RetrievalConfig()
+
+
 @assistant_router.post(
     "/messages",
     response_model=AssistantResponse,
@@ -71,7 +83,11 @@ async def create_assistant_message(
     user: User = Depends(require_authenticated_user),
     db: AsyncSession = Depends(get_db_session),
     provider: AIProvider = Depends(get_ai_provider),
+    embedding_provider: EmbeddingProvider = Depends(get_embedding_provider),
+    retrieval_config: RetrievalConfig = Depends(get_retrieval_config),
 ) -> AssistantResponse:
     correlation_id = x_correlation_id or uuid.uuid4()
     response.headers["X-Correlation-ID"] = str(correlation_id)
-    return await handle_assistant_request(db, user.id, payload, provider, correlation_id)
+    return await handle_assistant_request(
+        db, user.id, payload, provider, correlation_id, embedding_provider, retrieval_config
+    )

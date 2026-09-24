@@ -15,6 +15,7 @@ class AssistantStatus(StrEnum):
     ESCALATE = "escalate"
     OUT_OF_SCOPE = "out_of_scope"
     PROVIDER_UNAVAILABLE = "provider_unavailable"
+    RETRIEVAL_UNAVAILABLE = "retrieval_unavailable"
 
 
 class AssistantIntent(StrEnum):
@@ -69,6 +70,7 @@ class AssistantErrorCode(StrEnum):
     PROVIDER_UNAVAILABLE = "ASSISTANT_PROVIDER_UNAVAILABLE"
     GROUNDING_FAILED = "ASSISTANT_GROUNDING_FAILED"
     RESPONSE_INVALID = "ASSISTANT_RESPONSE_INVALID"
+    RETRIEVAL_UNAVAILABLE = "ASSISTANT_RETRIEVAL_UNAVAILABLE"
 
 
 class AssistantRequest(BaseModel):
@@ -153,6 +155,12 @@ class GroundingCandidate(BaseModel):
     source_is_active: bool
     source_effective_from: datetime | None = None
     source_effective_until: datetime | None = None
+    chunk_id: str | None = None
+    section_key: str | None = None
+    retrieval_methods: list[Literal["fts", "vector"]] = Field(default_factory=list)
+    lexical_score: float = 0.0
+    vector_score: float = 0.0
+    retrieval_config_version: str | None = None
 
 
 class AssistantSource(BaseModel):
@@ -189,6 +197,7 @@ class AssistantTrace(BaseModel):
     prompt_version: str
     response_schema_version: str
     retrieval_version: str
+    retrieval_state: str = "not_run"
     provider_name: str | None = None
     model_identifier: str | None = None
     knowledge_references: list[str] = Field(default_factory=list)
