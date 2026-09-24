@@ -5,6 +5,7 @@ from typing import Literal
 
 from fastapi import HTTPException, status
 from sqlalchemy import desc, func, literal, or_, select
+from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -667,7 +668,7 @@ async def get_student_articles(
     normalized_query = re.sub(r"[\x00-\x1f\x7f]+", " ", query or "").strip()
     tsquery = func.plainto_tsquery("english", normalized_query) if normalized_query else None
     rank = (
-        func.ts_rank_cd(KnowledgeVersion.search_vector, tsquery)
+        func.ts_rank_cd(KnowledgeVersion.search_vector.cast(TSVECTOR), tsquery)
         if tsquery is not None
         else literal(0.0)
     )
@@ -681,6 +682,12 @@ async def get_student_articles(
         .where(
             KnowledgeItem.status == KnowledgeStatus.ACTIVE,
             KnowledgeVersion.publication_state == PublicationState.PUBLISHED,
+            KnowledgeVersion.reviewed_at.is_not(None),
+            KnowledgeVersion.reviewed_by_id.is_not(None),
+            or_(KnowledgeVersion.review_due_at.is_(None), KnowledgeVersion.review_due_at > now),
+            Source.is_active.is_(True),
+            or_(Source.effective_from.is_(None), Source.effective_from <= now),
+            or_(Source.effective_until.is_(None), Source.effective_until > now),
             or_(
                 KnowledgeVersion.effective_from.is_(None),
                 KnowledgeVersion.effective_from <= now,
@@ -709,7 +716,7 @@ async def get_student_articles(
         )
         term = f"%{escaped_query}%"
         stmt = stmt.where(
-            KnowledgeVersion.search_vector.op("@@")(tsquery)
+            KnowledgeVersion.search_vector.cast(TSVECTOR).op("@@")(tsquery)
             | func.lower(KnowledgeItem.title).ilike(term, escape="\\")
             | func.lower(KnowledgeItem.category).ilike(term, escape="\\")
             | func.lower(KnowledgeItem.topic).ilike(term, escape="\\")
@@ -768,6 +775,12 @@ async def get_student_article_by_slug(db: AsyncSession, slug: str) -> StudentArt
             KnowledgeItem.slug == slug_norm,
             KnowledgeItem.status == KnowledgeStatus.ACTIVE,
             KnowledgeVersion.publication_state == PublicationState.PUBLISHED,
+            KnowledgeVersion.reviewed_at.is_not(None),
+            KnowledgeVersion.reviewed_by_id.is_not(None),
+            or_(KnowledgeVersion.review_due_at.is_(None), KnowledgeVersion.review_due_at > now),
+            Source.is_active.is_(True),
+            or_(Source.effective_from.is_(None), Source.effective_from <= now),
+            or_(Source.effective_until.is_(None), Source.effective_until > now),
             or_(
                 KnowledgeVersion.effective_from.is_(None),
                 KnowledgeVersion.effective_from <= now,
@@ -799,6 +812,11 @@ async def get_student_article_by_slug(db: AsyncSession, slug: str) -> StudentArt
         effective_from=ver.effective_from,
         last_reviewed_at=ver.reviewed_at,
         source=SourceRead.model_validate(src),
+        review_due_at=ver.review_due_at,
+        reviewed_by_present=ver.reviewed_by_id is not None,
+        version_effective_until=ver.effective_until,
+        publication_state=ver.publication_state.value,
+        item_status=item.status.value,
     )
 
 
@@ -811,9 +829,16 @@ async def get_student_categories(
         select(KnowledgeItem.category, func.count(KnowledgeItem.id))
         .join(KnowledgeVersion, KnowledgeItem.id == KnowledgeVersion.knowledge_item_id)
         .join(Jurisdiction, KnowledgeItem.jurisdiction_id == Jurisdiction.id)
+        .join(Source, KnowledgeVersion.source_id == Source.id)
         .where(
             KnowledgeItem.status == KnowledgeStatus.ACTIVE,
             KnowledgeVersion.publication_state == PublicationState.PUBLISHED,
+            KnowledgeVersion.reviewed_at.is_not(None),
+            KnowledgeVersion.reviewed_by_id.is_not(None),
+            or_(KnowledgeVersion.review_due_at.is_(None), KnowledgeVersion.review_due_at > now),
+            Source.is_active.is_(True),
+            or_(Source.effective_from.is_(None), Source.effective_from <= now),
+            or_(Source.effective_until.is_(None), Source.effective_until > now),
             or_(
                 KnowledgeVersion.effective_from.is_(None),
                 KnowledgeVersion.effective_from <= now,

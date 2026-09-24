@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
+from app.assistant.router import assistant_router
 from app.auth.dependencies import require_role
 from app.auth.router import auth_router
 from app.auth.schemas import UserResponse
@@ -23,6 +24,7 @@ router.include_router(complaint_router)
 router.include_router(admin_complaint_router)
 router.include_router(help_router)
 router.include_router(admin_help_router)
+router.include_router(assistant_router)
 
 
 @router.get(

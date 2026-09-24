@@ -279,6 +279,12 @@ class StudentArticleDetail(BaseModel):
     effective_from: datetime | None = None
     last_reviewed_at: datetime | None = None
     source: SourceRead
+    # Internal assistant retrieval eligibility metadata; excluded from public JSON.
+    review_due_at: datetime | None = Field(default=None, exclude=True)
+    reviewed_by_present: bool = Field(default=False, exclude=True)
+    version_effective_until: datetime | None = Field(default=None, exclude=True)
+    publication_state: str = Field(default="", exclude=True)
+    item_status: str = Field(default="", exclude=True)
 
 
 class CategorySummary(BaseModel):

@@ -299,3 +299,14 @@ Verification performed:
 - Safety behavior: guidance is static, editor-authored, available without AI, and places immediate safety first with escalation guidance last. The product does not provide legal representation, filing, guaranteed outcomes, binding opinions, or legal/illegal verdicts.
 - Documented architecture, visibility rules, verification, role gates, auditing, APIs, and limitations in ADR 0006 (`docs/adr/0006-complaint-guidance-help-directory.md`).
 - Validation: PostgreSQL and Redis Compose services healthy; migration `bc0d4f8a21e6` upgraded successfully; Alembic current `bc0d4f8a21e6 (head)`; Alembic check reported no drift. Pytest: 30 passed, 0 failed, 0 errors, including authentication, knowledge governance/search, and complaint/help integration tests. Ruff check passed with historical migration import-order `I001` ignored; Ruff format check passed; strict `mypy app`, compileall, and `git diff --check` passed. Ruff full check without that exception reports the pre-existing import-order warning in the unchanged Phase 2.2 migration `a31c7e2f9d10_add_knowledge_full_text_search.py`.
+# Phase 4.1 — AI legal assistant foundation
+
+Status: implementation and validation complete.
+
+- Added authenticated `POST /api/v1/assistant/messages` with typed request, structured response, stable error envelope, and correlation ID.
+- Added deterministic first-pass safety classification, provider gate, fail-closed default provider, versioned safety/grounding prompt, and a deterministic mock provider for tests.
+- Added governed PostgreSQL full-text knowledge retrieval, citation/currentness validation, metadata-only audit traceability, and verified-current emergency resource lookup. No incident narrative is persisted.
+- Tightened student knowledge queries to omit explicitly overdue reviews and inactive or temporally invalid sources; content without a scheduled review date retains existing publication behavior. Internal eligibility fields remain excluded from public JSON.
+- No provider credentials/vendor, pgvector/RAG adapter, complaint intake, or schema migration was added.
+- Validation against healthy PostgreSQL and Redis Compose services: Alembic current `bc0d4f8a21e6 (head)`, Alembic check reports no schema drift, and pytest reports 51 passed, 0 failed, 0 errors. Changed-file Ruff check and format check passed; `mypy app`, compileall, and `git diff --check` passed. Repository-wide Ruff check reports only I001 in the unchanged Phase 2.2 FTS migration.
+- Next: Phase 4.2 — separately review and implement retrieval augmentation/provider integration.
