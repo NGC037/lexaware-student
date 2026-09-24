@@ -152,6 +152,9 @@ class Jurisdiction(TimestampMixin, Base):
     knowledge_items: Mapped[list[KnowledgeItem]] = relationship(back_populates="jurisdiction")
     sources: Mapped[list[Source]] = relationship(back_populates="jurisdiction")
     help_resources: Mapped[list[HelpResource]] = relationship(back_populates="jurisdiction")
+    complaint_guide_versions: Mapped[list[ComplaintGuideVersion]] = relationship(
+        back_populates="jurisdiction"
+    )
     complaints: Mapped[list[Complaint]] = relationship(back_populates="jurisdiction")
 
 
@@ -175,6 +178,7 @@ class Source(TimestampMixin, Base):
 
     jurisdiction: Mapped[Jurisdiction] = relationship(back_populates="sources")
     knowledge_versions: Mapped[list[KnowledgeVersion]] = relationship(back_populates="source")
+    help_resources: Mapped[list[HelpResource]] = relationship(back_populates="source")
 
 
 class KnowledgeItem(TimestampMixin, Base):
@@ -354,16 +358,48 @@ class AuditEvent(Base):
 
 class HelpResource(TimestampMixin, Base):
     __tablename__ = "help_resources"
-    __table_args__ = (Index("ix_help_resources_jurisdiction_status", "jurisdiction_id", "status"),)
+    __table_args__ = (
+        Index("ix_help_resources_jurisdiction_status", "jurisdiction_id", "status"),
+        Index(
+            "ix_help_resources_jurisdiction_category_assistance_status",
+            "jurisdiction_id",
+            "category",
+            "assistance_type",
+            "status",
+        ),
+        Index("ix_help_resources_source_id", "source_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     jurisdiction_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("jurisdictions.id", ondelete="RESTRICT"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    category: Mapped[str] = mapped_column(
+        String(80), nullable=False, default="general", server_default="general"
+    )
+    resource_type: Mapped[str] = mapped_column(
+        String(60), nullable=False, default="support", server_default="support"
+    )
+    assistance_type: Mapped[str] = mapped_column(
+        String(80), nullable=False, default="general", server_default="general"
+    )
+    contact_method: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="in_person", server_default="in_person"
+    )
     description: Mapped[str | None] = mapped_column(Text)
     contact_url: Mapped[str | None] = mapped_column(String(2048))
     phone: Mapped[str | None] = mapped_column(String(40))
+    contact_email: Mapped[str | None] = mapped_column(String(254))
+    source_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("sources.id", ondelete="RESTRICT")
+    )
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    verified_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    verification_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[ResourceStatus] = mapped_column(
         Enum(ResourceStatus, name="resource_status", values_callable=enum_values),
         default=ResourceStatus.ACTIVE,
@@ -371,6 +407,78 @@ class HelpResource(TimestampMixin, Base):
     )
 
     jurisdiction: Mapped[Jurisdiction] = relationship(back_populates="help_resources")
+    source: Mapped[Source | None] = relationship(back_populates="help_resources")
+
+
+class ComplaintGuide(TimestampMixin, Base):
+    __tablename__ = "complaint_guides"
+    __table_args__ = (Index("ix_complaint_guides_status", "status"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    slug: Mapped[str] = mapped_column(String(160), unique=True, nullable=False)
+    status: Mapped[KnowledgeStatus] = mapped_column(
+        Enum(KnowledgeStatus, name="knowledge_status", values_callable=enum_values),
+        default=KnowledgeStatus.ACTIVE,
+        nullable=False,
+    )
+
+    versions: Mapped[list[ComplaintGuideVersion]] = relationship(
+        back_populates="guide",
+        cascade="all, delete-orphan",
+        order_by="ComplaintGuideVersion.version_number",
+    )
+
+
+class ComplaintGuideVersion(TimestampMixin, Base):
+    __tablename__ = "complaint_guide_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "guide_id", "version_number", name="uq_complaint_guide_versions_guide_number"
+        ),
+        CheckConstraint("version_number > 0", name="ck_complaint_guide_versions_positive_number"),
+        Index("ix_complaint_guide_versions_guide_state", "guide_id", "publication_state"),
+        Index("ix_complaint_guide_versions_jurisdiction", "jurisdiction_id"),
+        Index("ix_complaint_guide_versions_effective_dates", "effective_from", "effective_until"),
+        Index("ix_complaint_guide_versions_review_due_at", "review_due_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    guide_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("complaint_guides.id", ondelete="CASCADE"), nullable=False
+    )
+    version_number: Mapped[int] = mapped_column(nullable=False)
+    title: Mapped[str] = mapped_column(String(240), nullable=False)
+    category: Mapped[str] = mapped_column(String(80), nullable=False)
+    jurisdiction_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("jurisdictions.id", ondelete="RESTRICT"), nullable=False
+    )
+    audience: Mapped[str] = mapped_column(
+        String(60), nullable=False, default="students", server_default="students"
+    )
+    short_description: Mapped[str] = mapped_column(String(500), nullable=False)
+    guidance_steps: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    publication_state: Mapped[PublicationState] = mapped_column(
+        Enum(PublicationState, name="publication_state", values_callable=enum_values),
+        default=PublicationState.DRAFT,
+        nullable=False,
+    )
+    effective_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    effective_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    published_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    review_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    change_summary: Mapped[str | None] = mapped_column(String(500))
+
+    guide: Mapped[ComplaintGuide] = relationship(back_populates="versions")
+    jurisdiction: Mapped[Jurisdiction] = relationship(back_populates="complaint_guide_versions")
 
 
 class Complaint(TimestampMixin, Base):
