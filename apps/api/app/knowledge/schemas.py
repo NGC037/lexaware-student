@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # ---------------------------------------------------------------------------
 # Jurisdiction & Source Schemas
@@ -64,6 +64,9 @@ class KnowledgeVersionSummary(BaseModel):
     version_number: int
     title: str
     summary: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+    synonyms: str | None = None
     publication_state: str
     effective_from: datetime | None = None
     effective_until: datetime | None = None
@@ -87,6 +90,9 @@ class KnowledgeVersionDetail(BaseModel):
     title: str
     summary: str | None = None
     content: str
+    tags: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+    synonyms: str | None = None
     applicability_notes: str | None = None
     escalation_guidance: str | None = None
     publication_state: str
@@ -108,6 +114,9 @@ class KnowledgeVersionCreate(BaseModel):
     title: str | None = Field(default=None, max_length=300)
     summary: str | None = None
     content: str = Field(min_length=10)
+    tags: list[str] = Field(default_factory=list, max_length=50)
+    keywords: list[str] = Field(default_factory=list, max_length=50)
+    synonyms: str | None = Field(default=None, max_length=2000)
     applicability_notes: str | None = None
     escalation_guidance: str | None = None
     effective_from: datetime | None = None
@@ -115,11 +124,22 @@ class KnowledgeVersionCreate(BaseModel):
     review_due_at: datetime | None = None
     change_summary: str | None = Field(default=None, max_length=500)
 
+    @field_validator("tags", "keywords")
+    @classmethod
+    def normalize_search_terms(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip() for value in values]
+        if any(not value or len(value) > 100 for value in normalized):
+            raise ValueError("Search terms must contain 1 to 100 characters.")
+        return list(dict.fromkeys(normalized))
+
 
 class KnowledgeVersionUpdate(BaseModel):
     title: str | None = Field(default=None, max_length=300)
     summary: str | None = None
     content: str | None = Field(default=None, min_length=10)
+    tags: list[str] | None = Field(default=None, max_length=50)
+    keywords: list[str] | None = Field(default=None, max_length=50)
+    synonyms: str | None = Field(default=None, max_length=2000)
     applicability_notes: str | None = None
     escalation_guidance: str | None = None
     source_id: uuid.UUID | None = None
@@ -127,6 +147,16 @@ class KnowledgeVersionUpdate(BaseModel):
     effective_until: datetime | None = None
     review_due_at: datetime | None = None
     change_summary: str | None = Field(default=None, max_length=500)
+
+    @field_validator("tags", "keywords")
+    @classmethod
+    def normalize_optional_search_terms(cls, values: list[str] | None) -> list[str] | None:
+        if values is None:
+            return None
+        normalized = [value.strip() for value in values]
+        if any(not value or len(value) > 100 for value in normalized):
+            raise ValueError("Search terms must contain 1 to 100 characters.")
+        return list(dict.fromkeys(normalized))
 
 
 class ReviewDecisionRequest(BaseModel):
@@ -153,11 +183,22 @@ class KnowledgeItemCreate(BaseModel):
     source_id: uuid.UUID
     content: str = Field(min_length=10)
     summary: str | None = None
+    tags: list[str] = Field(default_factory=list, max_length=50)
+    keywords: list[str] = Field(default_factory=list, max_length=50)
+    synonyms: str | None = Field(default=None, max_length=2000)
     applicability_notes: str | None = None
     escalation_guidance: str | None = None
     effective_from: datetime | None = None
     effective_until: datetime | None = None
     review_due_at: datetime | None = None
+
+    @field_validator("tags", "keywords")
+    @classmethod
+    def normalize_search_terms(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip() for value in values]
+        if any(not value or len(value) > 100 for value in normalized):
+            raise ValueError("Search terms must contain 1 to 100 characters.")
+        return list(dict.fromkeys(normalized))
 
 
 class KnowledgeItemAdminDetail(BaseModel):
@@ -209,10 +250,15 @@ class StudentArticleListItem(BaseModel):
     topic: str | None = None
     audience: str
     summary: str | None = None
+    applicability_notes: str | None = None
+    escalation_guidance: str | None = None
     jurisdiction: JurisdictionRead
     effective_from: datetime | None = None
     last_reviewed_at: datetime | None = None
     source_title: str | None = None
+    source_publisher: str | None = None
+    source_url: str
+    source_citation: str | None = None
 
 
 class StudentArticleDetail(BaseModel):

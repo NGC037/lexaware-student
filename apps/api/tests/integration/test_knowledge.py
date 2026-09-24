@@ -7,6 +7,9 @@ from sqlalchemy import select
 
 from app.db.models import (
     AuditEvent,
+    KnowledgeItem,
+    KnowledgeStatus,
+    KnowledgeVersion,
     Role,
     User,
     UserCredential,
@@ -174,6 +177,10 @@ async def test_complete_knowledge_lifecycle_and_invariants(
     pub_list_before = await async_client.get("/api/v1/knowledge/articles?category=ragging")
     assert pub_list_before.status_code == 200
     assert not any(a["slug"] == slug for a in pub_list_before.json())
+    unpublished_search = await async_client.get(
+        "/api/v1/knowledge/articles", params={"q": "Ragging UGC regulations"}
+    )
+    assert not any(a["slug"] == slug for a in unpublished_search.json())
 
     pub_detail_before = await async_client.get(f"/api/v1/knowledge/articles/{slug}")
     assert pub_detail_before.status_code == 404
@@ -200,6 +207,10 @@ async def test_complete_knowledge_lifecycle_and_invariants(
     )
     assert submit_res.status_code == 200
     assert submit_res.json()["publication_state"] == "in_review"
+    in_review_search = await async_client.get(
+        "/api/v1/knowledge/articles", params={"q": "Ragging UGC regulations"}
+    )
+    assert not any(a["slug"] == slug for a in in_review_search.json())
 
     # Invariant: Directly editing an in-review version is forbidden
     edit_rejected = await async_client.put(
@@ -232,6 +243,10 @@ async def test_complete_knowledge_lifecycle_and_invariants(
     assert approve_res.status_code == 200
     assert approve_res.json()["publication_state"] == "approved"
     assert approve_res.json()["reviewed_at"] is not None
+    approved_search = await async_client.get(
+        "/api/v1/knowledge/articles", params={"q": "Ragging UGC regulations"}
+    )
+    assert not any(a["slug"] == slug for a in approved_search.json())
 
     # Step 7: Publishing permissions: Reviewer cannot publish (needs publisher/admin)
     pub_unauth = await async_client.post(
@@ -256,6 +271,10 @@ async def test_complete_knowledge_lifecycle_and_invariants(
     assert len(matched_list) == 1
     assert matched_list[0]["category"] == "ragging"
     assert "UGC Regulations" in matched_list[0]["source_title"]
+    published_search = await async_client.get(
+        "/api/v1/knowledge/articles", params={"q": "Ragging UGC regulations"}
+    )
+    assert any(a["slug"] == slug for a in published_search.json())
 
     student_detail = await async_client.get(f"/api/v1/knowledge/articles/{slug}")
     assert student_detail.status_code == 200
@@ -317,11 +336,55 @@ async def test_complete_knowledge_lifecycle_and_invariants(
     versions_map = {v["version_number"]: v for v in item_admin_check.json()["versions"]}
     assert versions_map[1]["publication_state"] == "superseded"
     assert versions_map[2]["publication_state"] == "published"
+    superseded_search = await async_client.get(
+        "/api/v1/knowledge/articles", params={"q": "strictly prohibited"}
+    )
+    assert not any(a["slug"] == slug for a in superseded_search.json())
 
     # Public endpoint now serves v2 immediately
     student_check_v2 = await async_client.get(f"/api/v1/knowledge/articles/{slug}")
     assert student_check_v2.json()["version_number"] == 2
     assert "digital harassment" in student_check_v2.json()["content"]
+
+    # Effective dates and item status are enforced by the same student search boundary.
+    async with AsyncSessionLocal() as session:
+        current_v2 = await session.get(KnowledgeVersion, v2_id)
+        assert current_v2 is not None
+        current_v2.effective_from = datetime.now(UTC) + timedelta(days=1)
+        await session.commit()
+    future_search = await async_client.get(
+        "/api/v1/knowledge/articles", params={"q": "digital harassment"}
+    )
+    assert not any(a["slug"] == slug for a in future_search.json())
+
+    async with AsyncSessionLocal() as session:
+        current_v2 = await session.get(KnowledgeVersion, v2_id)
+        assert current_v2 is not None
+        current_v2.effective_from = datetime.now(UTC) - timedelta(days=2)
+        current_v2.effective_until = datetime.now(UTC) - timedelta(days=1)
+        await session.commit()
+    expired_search = await async_client.get(
+        "/api/v1/knowledge/articles", params={"q": "digital harassment"}
+    )
+    assert not any(a["slug"] == slug for a in expired_search.json())
+
+    async with AsyncSessionLocal() as session:
+        current_v2 = await session.get(KnowledgeVersion, v2_id)
+        item = await session.get(KnowledgeItem, item_id)
+        assert current_v2 is not None and item is not None
+        current_v2.effective_until = None
+        item.status = KnowledgeStatus.ARCHIVED
+        await session.commit()
+    inactive_search = await async_client.get(
+        "/api/v1/knowledge/articles", params={"q": "digital harassment"}
+    )
+    assert not any(a["slug"] == slug for a in inactive_search.json())
+
+    async with AsyncSessionLocal() as session:
+        item = await session.get(KnowledgeItem, item_id)
+        assert item is not None
+        item.status = KnowledgeStatus.ACTIVE
+        await session.commit()
 
     # Step 10: Unpublish / Archive workflow
     unpub_res = await async_client.post(
@@ -334,6 +397,10 @@ async def test_complete_knowledge_lifecycle_and_invariants(
     # Public endpoint returns 404 once archived
     student_archived_check = await async_client.get(f"/api/v1/knowledge/articles/{slug}")
     assert student_archived_check.status_code == 404
+    archived_search = await async_client.get(
+        "/api/v1/knowledge/articles", params={"q": "digital harassment"}
+    )
+    assert not any(a["slug"] == slug for a in archived_search.json())
 
     # Verify audit trail in database
     async with AsyncSessionLocal() as session:
@@ -547,13 +614,21 @@ async def test_search_and_category_discovery(async_client: httpx.AsyncClient) ->
             "title": f"Student Course Fee Refund Rights ({unique_keyword})",
             "source_id": src["id"],
             "content": (f"Coaching platforms cannot withhold refunds unfairly ({unique_keyword})."),
-            "summary": "Guide on claiming refunds from coaching institutes and unfair contracts.",
+            "summary": f"{unique_keyword} summarizes student remedies for unfair course contracts.",
+            "tags": ["course-refunds", "student remedies"],
+            "keywords": ["coaching-fees", "consumer protection"],
+            "synonyms": "tuition reimbursement course fee payback",
             "applicability_notes": "All students enrolled in coaching centers or online courses.",
             "escalation_guidance": "File grievance on National Consumer Helpline (1915).",
         },
         cookies=reviewer_cookies,
     )
     v1_id = item_res.json()["versions"][0]["id"]
+
+    # Draft content and its search metadata must remain invisible.
+    draft_search = await async_client.get(f"/api/v1/knowledge/articles?q={unique_keyword}")
+    assert draft_search.status_code == 200
+    assert not any(a["slug"] == item_res.json()["slug"] for a in draft_search.json())
 
     await async_client.post(
         f"/api/v1/admin/knowledge/versions/{v1_id}/submit-review",
@@ -581,3 +656,97 @@ async def test_search_and_category_discovery(async_client: httpx.AsyncClient) ->
     assert search_res.status_code == 200
     assert len(search_res.json()) >= 1
     assert unique_keyword in search_res.json()[0]["title"]
+
+    slug = item_res.json()["slug"]
+    # PostgreSQL FTS covers each editor-provided field, and student metadata is returned.
+    for term in (
+        "course-refunds",
+        "coaching-fees",
+        "reimbursement",
+        "unfair course contracts",
+    ):
+        response = await async_client.get("/api/v1/knowledge/articles", params={"q": term})
+        assert response.status_code == 200
+        assert any(article["slug"] == slug for article in response.json())
+
+    secondary = await async_client.post(
+        "/api/v1/admin/knowledge/items",
+        json={
+            "jurisdiction_id": jur["id"],
+            "category": "consumer_rights",
+            "slug": f"secondary-refund-{uuid4().hex[:6]}",
+            "title": "Other Consumer Guidance",
+            "source_id": src["id"],
+            "content": f"A short note mentioning {unique_keyword} once, and nothing else.",
+            "summary": "A separate plain-language overview.",
+            "applicability_notes": "Applicable to students.",
+            "escalation_guidance": "Contact the consumer helpline.",
+        },
+        cookies=reviewer_cookies,
+    )
+    secondary_version_id = secondary.json()["versions"][0]["id"]
+    await async_client.post(
+        f"/api/v1/admin/knowledge/versions/{secondary_version_id}/submit-review",
+        cookies=reviewer_cookies,
+    )
+    await async_client.post(
+        f"/api/v1/admin/knowledge/versions/{secondary_version_id}/review",
+        json={"decision": "approve"},
+        cookies=reviewer_cookies,
+    )
+    await async_client.post(
+        f"/api/v1/admin/knowledge/versions/{secondary_version_id}/publish",
+        cookies=publisher_cookies,
+    )
+    ranked = await async_client.get("/api/v1/knowledge/articles", params={"q": unique_keyword})
+    assert ranked.json()[0]["slug"] == slug
+
+    result = next(article for article in search_res.json() if article["slug"] == slug)
+    assert result["source_title"] == src["title"]
+    assert result["source_url"] == src["source_url"]
+    assert result["last_reviewed_at"] is not None
+    assert result["applicability_notes"]
+    assert result["escalation_guidance"]
+    assert "publication_state" not in result
+    assert "reviewed_by_id" not in result
+    assert "published_by_id" not in result
+
+    # Structured filters only include student-visible articles.
+    assert any(
+        article["slug"] == slug
+        for article in (
+            await async_client.get(
+                "/api/v1/knowledge/articles",
+                params={
+                    "category": "consumer_rights",
+                    "jurisdiction": "IN-UP",
+                    "audience": "students",
+                },
+            )
+        ).json()
+    )
+    wrong_audience = await async_client.get(
+        "/api/v1/knowledge/articles", params={"audience": "reviewers"}
+    )
+    assert not any(article["slug"] == slug for article in wrong_audience.json())
+
+    # Empty queries retain browse semantics, pagination is bounded, and malformed input is safe.
+    browse = await async_client.get("/api/v1/knowledge/articles", params={"limit": 1})
+    empty = await async_client.get("/api/v1/knowledge/articles", params={"q": "   ", "limit": 1})
+    assert [a["slug"] for a in empty.json()] == [a["slug"] for a in browse.json()]
+    max_limit = await async_client.get("/api/v1/knowledge/articles", params={"limit": 100})
+    assert len(max_limit.json()) <= 100
+    too_many = await async_client.get("/api/v1/knowledge/articles", params={"limit": 101})
+    assert too_many.status_code == 422
+    negative_offset = await async_client.get("/api/v1/knowledge/articles", params={"offset": -1})
+    assert negative_offset.status_code == 422
+    long_query = await async_client.get("/api/v1/knowledge/articles", params={"q": "x" * 201})
+    assert long_query.status_code == 422
+    for malformed in ('" OR ; --', "*** && !!!", "' OR 1=1 --"):
+        safe_response = await async_client.get(
+            "/api/v1/knowledge/articles", params={"q": malformed}
+        )
+        assert safe_response.status_code == 200
+
+    repeat = await async_client.get("/api/v1/knowledge/articles", params={"q": unique_keyword})
+    assert [a["slug"] for a in repeat.json()] == [a["slug"] for a in ranked.json()]

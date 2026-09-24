@@ -79,3 +79,21 @@ Article bodies and full legal texts are never duplicated into audit payloads.
 - Non-draft content is immutable, guaranteeing an unbroken revision history.
 - Students are protected from accessing unverified drafts or outdated superseded guidance.
 - Governance teams have real-time visibility into review schedules and stale legal articles.
+
+## Student Search Extension (Chunk 2.2)
+
+### PostgreSQL Full-Text Search
+
+The existing `GET /api/v1/knowledge/articles` endpoint serves both browse and search. PostgreSQL stores a maintained `tsvector` on each `KnowledgeVersion`, built from its title, summary, content, JSONB `tags`, JSONB `keywords`, and nullable `synonyms` using the English text-search configuration. A database trigger refreshes the vector on insert and whenever one of those fields changes. Existing rows are backfilled by migration `a31c7e2f9d10`; a GIN index supports vector matches.
+
+Search uses parameterized SQLAlchemy expressions with `plainto_tsquery` and `ts_rank_cd`. Category, jurisdiction, and audience remain normalized structured filters. For compatibility, item title/category/topic also have separately parameterized literal substring matching; these matches rank below full-text matches. Ties are ordered by version title, slug, item ID, and version number. No rank internals are exposed in student responses.
+
+### Input, Results, and Pagination
+
+Search terms are trimmed, control characters are removed, and query length is limited to 200 characters. PostgreSQL's plain-text query parser treats punctuation as input rather than query operators. Structured substring matching escapes wildcard characters. Empty or whitespace-only `q` uses the existing browse behavior. Browse and search default to 50 results, cap `limit` at 100, and accept offsets from 0 through 1,000,000.
+
+Student list results include only student-facing article fields plus source title, publisher, URL, citation, review date, applicability notes, and escalation guidance. They omit publication state, reviewer/publisher IDs, audit data, and relevance scores. All search and filter predicates are applied in the same SQL statement after the active-item, published-version, and effective-date boundary.
+
+### Limitations
+
+English stemming is currently used for all indexed content. Search is lexical rather than semantic; synonyms must be entered by editors as searchable text. Searchable item classification remains structured and is not merged into the version vector. The trigram/fuzzy and multilingual search strategies are outside this increment.

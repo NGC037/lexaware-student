@@ -1,9 +1,10 @@
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import desc, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -191,6 +192,9 @@ async def create_knowledge_item(
         title=req.title.strip(),
         summary=req.summary.strip() if req.summary else None,
         content=req.content.strip(),
+        tags=req.tags,
+        keywords=req.keywords,
+        synonyms=req.synonyms.strip() if req.synonyms else None,
         applicability_notes=req.applicability_notes.strip() if req.applicability_notes else None,
         escalation_guidance=req.escalation_guidance.strip() if req.escalation_guidance else None,
         publication_state=PublicationState.DRAFT,
@@ -289,6 +293,9 @@ async def create_new_draft_version(
         title=title,
         summary=req.summary.strip() if req.summary else None,
         content=req.content.strip(),
+        tags=req.tags,
+        keywords=req.keywords,
+        synonyms=req.synonyms.strip() if req.synonyms else None,
         applicability_notes=req.applicability_notes.strip() if req.applicability_notes else None,
         escalation_guidance=req.escalation_guidance.strip() if req.escalation_guidance else None,
         publication_state=PublicationState.DRAFT,
@@ -352,6 +359,12 @@ async def update_draft_version(
         version.summary = req.summary.strip() if req.summary else None
     if req.content is not None:
         version.content = req.content.strip()
+    if req.tags is not None:
+        version.tags = req.tags
+    if req.keywords is not None:
+        version.keywords = req.keywords
+    if req.synonyms is not None:
+        version.synonyms = req.synonyms.strip() or None
     if req.applicability_notes is not None:
         version.applicability_notes = (
             req.applicability_notes.strip() if req.applicability_notes else None
@@ -631,11 +644,14 @@ async def get_student_articles(
     db: AsyncSession,
     jurisdiction_code: str | None = None,
     category: str | None = None,
+    audience: str | None = None,
     query: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[StudentArticleListItem]:
     """Retrieve published, currently applicable articles for student browsing and search.
+
+    Empty or whitespace-only queries use the same browse behavior as an omitted query.
 
     Safety Guarantees:
     - Only KnowledgeStatus.ACTIVE items.
@@ -644,9 +660,21 @@ async def get_student_articles(
     - NEVER returns drafts, in-review, approved, superseded, or archived content.
     """
     now = datetime.now(UTC)
+    if len(query or "") > 200:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Query too long."
+        )
+    normalized_query = re.sub(r"[\x00-\x1f\x7f]+", " ", query or "").strip()
+    tsquery = func.plainto_tsquery("english", normalized_query) if normalized_query else None
+    rank = (
+        func.ts_rank_cd(KnowledgeVersion.search_vector, tsquery)
+        if tsquery is not None
+        else literal(0.0)
+    )
 
     stmt = (
         select(KnowledgeItem, KnowledgeVersion, Jurisdiction, Source)
+        .add_columns(rank)
         .join(KnowledgeVersion, KnowledgeItem.id == KnowledgeVersion.knowledge_item_id)
         .join(Jurisdiction, KnowledgeItem.jurisdiction_id == Jurisdiction.id)
         .join(Source, KnowledgeVersion.source_id == Source.id)
@@ -672,23 +700,36 @@ async def get_student_articles(
         cat_norm = category.strip().lower()
         stmt = stmt.where(KnowledgeItem.category == cat_norm)
 
-    if query:
-        term = f"%{query.strip().lower()}%"
+    if audience:
+        stmt = stmt.where(KnowledgeItem.audience == audience.strip().lower())
+
+    if normalized_query:
+        escaped_query = (
+            normalized_query.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
+        term = f"%{escaped_query}%"
         stmt = stmt.where(
-            or_(
-                func.lower(KnowledgeItem.title).ilike(term),
-                func.lower(KnowledgeVersion.title).ilike(term),
-                func.lower(KnowledgeVersion.summary).ilike(term),
-                func.lower(KnowledgeItem.category).ilike(term),
-                func.lower(KnowledgeItem.topic).ilike(term),
-            )
+            KnowledgeVersion.search_vector.op("@@")(tsquery)
+            | func.lower(KnowledgeItem.title).ilike(term, escape="\\")
+            | func.lower(KnowledgeItem.category).ilike(term, escape="\\")
+            | func.lower(KnowledgeItem.topic).ilike(term, escape="\\")
         )
 
-    stmt = stmt.order_by(KnowledgeItem.title).limit(limit).offset(offset)
+    stmt = (
+        stmt.order_by(
+            desc(rank),
+            func.lower(KnowledgeVersion.title),
+            KnowledgeItem.slug,
+            KnowledgeItem.id,
+            KnowledgeVersion.version_number,
+        )
+        .limit(min(max(limit, 1), 100))
+        .offset(max(offset, 0))
+    )
     results = await db.execute(stmt)
 
     articles: list[StudentArticleListItem] = []
-    for item, ver, jur, src in results.all():
+    for item, ver, jur, src, _relevance in results.all():
         articles.append(
             StudentArticleListItem(
                 id=item.id,
@@ -698,10 +739,15 @@ async def get_student_articles(
                 topic=item.topic,
                 audience=item.audience,
                 summary=ver.summary,
+                applicability_notes=ver.applicability_notes,
+                escalation_guidance=ver.escalation_guidance,
                 jurisdiction=JurisdictionRead.model_validate(jur),
                 effective_from=ver.effective_from,
                 last_reviewed_at=ver.reviewed_at,
                 source_title=src.title if src else None,
+                source_publisher=src.publisher if src else None,
+                source_url=src.source_url,
+                source_citation=src.citation,
             )
         )
 

@@ -16,7 +16,9 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -224,6 +226,7 @@ class KnowledgeVersion(TimestampMixin, Base):
         Index("ix_knowledge_versions_item_state", "knowledge_item_id", "publication_state"),
         Index("ix_knowledge_versions_effective_dates", "effective_from", "effective_until"),
         Index("ix_knowledge_versions_review_due_at", "review_due_at"),
+        Index("ix_knowledge_versions_search_vector", "search_vector", postgresql_using="gin"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -237,6 +240,14 @@ class KnowledgeVersion(TimestampMixin, Base):
     title: Mapped[str] = mapped_column(String(300), nullable=False, default="", server_default="")
     summary: Mapped[str | None] = mapped_column(Text)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    tags: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    keywords: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    synonyms: Mapped[str | None] = mapped_column(Text)
+    search_vector: Mapped[str] = mapped_column(TSVECTOR, nullable=False)
     applicability_notes: Mapped[str | None] = mapped_column(Text)
     escalation_guidance: Mapped[str | None] = mapped_column(Text)
     publication_state: Mapped[PublicationState] = mapped_column(

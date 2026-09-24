@@ -58,14 +58,17 @@ knowledge_router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 )
 async def list_student_articles_endpoint(
     jurisdiction: str | None = Query(
-        default=None, description="Jurisdiction code filter (e.g. IN-DL, IN-KA)"
+        default=None, max_length=32, description="Jurisdiction code filter (e.g. IN-DL, IN-KA)"
     ),
     category: str | None = Query(
-        default=None, description="Category filter (e.g. ragging, tenancy)"
+        default=None, max_length=80, description="Category filter (e.g. ragging, tenancy)"
     ),
-    q: str | None = Query(default=None, description="Search query string"),
+    audience: str | None = Query(
+        default=None, max_length=60, description="Audience filter (e.g. students)"
+    ),
+    q: str | None = Query(default=None, max_length=200, description="Search query string"),
     limit: int = Query(default=50, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
+    offset: int = Query(default=0, ge=0, le=1_000_000),
     db: AsyncSession = Depends(get_db_session),
 ) -> list[StudentArticleListItem]:
     """Retrieve published articles matching filters.
@@ -76,6 +79,7 @@ async def list_student_articles_endpoint(
         db,
         jurisdiction_code=jurisdiction,
         category=category,
+        audience=audience,
         query=q,
         limit=limit,
         offset=offset,

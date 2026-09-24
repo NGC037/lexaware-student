@@ -280,3 +280,12 @@ Verification performed:
 - Added comprehensive integration test suite `apps/api/tests/integration/test_knowledge.py` covering all lifecycle states, invariant enforcement, unauthorized role attempts, search, category counting, automatic superseding, and stale review scheduling.
 - Documented in ADR 0005 (`docs/adr/0005-governed-knowledge-domain.md`).
 - Validation: 28 tests passed across full test suite; mypy passed in strict mode; Ruff check and formatting checks passed with 0 errors; `alembic check` reported zero drift; Alembic current is `45bd284b1395 (head)`.
+
+#### Chunk 2.2 â€” Student Knowledge Search - Implemented
+
+- Extended `GET /api/v1/knowledge/articles` with PostgreSQL full-text search and typed category, jurisdiction, audience, limit, and offset parameters. Empty or whitespace-only `q` follows browse behavior.
+- Added `KnowledgeVersion.tags` and `keywords` JSONB arrays, nullable `synonyms`, and a maintained `search_vector`. Migration `a31c7e2f9d10` backfills existing rows, installs an update trigger, and creates a GIN index.
+- Search covers title, summary, content, tags, keywords, and synonyms with `plainto_tsquery` and `ts_rank_cd`; structured item/category/topic matching remains separate. Results retain the student-safe active, published, effective-date SQL boundary and have stable secondary ordering.
+- Student list output includes source citation metadata, review date, applicability notes, and escalation guidance, without internal governance IDs/state.
+- Added integration cases for field matching, ranking, filters, hidden drafts, malformed input, empty queries, pagination, metadata, and private governance-field exclusion.
+- Validation: PostgreSQL and Redis integration services were verified healthy. Migration `a31c7e2f9d10` upgraded successfully; Alembic current is `a31c7e2f9d10 (head)`, and `alembic check` passed with no schema drift. Pytest: 28 passed, 0 failed, 0 errors. Ruff check, Ruff format check, `mypy app`, compileall, and `git diff --check` passed. Authentication regression, knowledge governance, and FTS/search tests passed. No application, security, visibility, or pagination blocking issues were found.
