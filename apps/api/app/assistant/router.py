@@ -10,7 +10,7 @@ from fastapi.routing import APIRoute
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import JSONResponse
 
-from app.assistant.provider import AIProvider, DisabledProvider
+from app.assistant.provider import AIProvider, DisabledProvider, GeminiProvider
 from app.assistant.schemas import (
     AssistantErrorCode,
     AssistantErrorEnvelope,
@@ -20,6 +20,7 @@ from app.assistant.schemas import (
 )
 from app.assistant.service import handle_assistant_request
 from app.auth.dependencies import require_authenticated_user, verify_csrf_protection
+from app.core.config import get_settings
 from app.db.models import User
 from app.db.session import get_db_session
 from app.knowledge.rag.config import RetrievalConfig
@@ -55,18 +56,41 @@ assistant_router = APIRouter(
 
 
 def get_ai_provider() -> AIProvider:
-    """Fail closed until a provider adapter is explicitly configured."""
+    """Select only an explicitly configured provider; default remains fail closed."""
+    settings = get_settings()
+    if settings.ai_provider == "gemini" and settings.gemini_api_key:
+        return GeminiProvider(
+            settings.gemini_api_key.get_secret_value(),
+            model=settings.gemini_model,
+            timeout_seconds=settings.gemini_timeout_seconds,
+            temperature=settings.gemini_temperature,
+            max_output_tokens=settings.gemini_max_output_tokens,
+        )
     return DisabledProvider()
 
 
 def get_embedding_provider() -> EmbeddingProvider:
-    """Fail closed until a production embedding adapter is explicitly configured."""
+    """Select a configured embedding provider; default remains fail closed."""
+    settings = get_settings()
+    if settings.embedding_provider == "gemini" and settings.gemini_api_key:
+        from app.knowledge.rag.embeddings import GeminiEmbeddingProvider
+
+        return GeminiEmbeddingProvider(
+            settings.gemini_api_key.get_secret_value(),
+            dimension=settings.embedding_dimension,
+            timeout_seconds=settings.gemini_timeout_seconds,
+        )
     return DisabledEmbeddingProvider()
 
 
 def get_retrieval_config() -> RetrievalConfig:
-    """Return the immutable default config; deployments can inject a matching model version."""
-    return RetrievalConfig()
+    """Return configured, schema-compatible retrieval metadata."""
+    settings = get_settings()
+    return RetrievalConfig(
+        version=settings.retrieval_config_version,
+        embedding_model=settings.embedding_model,
+        embedding_dimension=settings.embedding_dimension,
+    )
 
 
 @assistant_router.post(

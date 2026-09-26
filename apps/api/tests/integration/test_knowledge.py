@@ -721,12 +721,13 @@ async def test_search_and_category_discovery(async_client: httpx.AsyncClient) ->
                     "category": "consumer_rights",
                     "jurisdiction": "IN-UP",
                     "audience": "students",
+                    "limit": 100,
                 },
             )
         ).json()
     )
     wrong_audience = await async_client.get(
-        "/api/v1/knowledge/articles", params={"audience": "reviewers"}
+        "/api/v1/knowledge/articles", params={"audience": "reviewers", "limit": 100}
     )
     assert not any(article["slug"] == slug for article in wrong_audience.json())
 

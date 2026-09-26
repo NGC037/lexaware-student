@@ -287,7 +287,7 @@ class KnowledgeChunk(TimestampMixin, Base):
     __table_args__ = (
         CheckConstraint("ordinal >= 0", name="ck_knowledge_chunks_nonnegative_ordinal"),
         CheckConstraint(
-            "embedding_dimension = 384", name="ck_knowledge_chunks_embedding_dimension"
+            "embedding_dimension = 768", name="ck_knowledge_chunks_embedding_dimension"
         ),
         UniqueConstraint(
             "knowledge_version_id",

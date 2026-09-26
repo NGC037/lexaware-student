@@ -155,11 +155,13 @@ class GroundingCandidate(BaseModel):
     source_is_active: bool
     source_effective_from: datetime | None = None
     source_effective_until: datetime | None = None
+    source_review_state: str | None = None
     chunk_id: str | None = None
     section_key: str | None = None
     retrieval_methods: list[Literal["fts", "vector"]] = Field(default_factory=list)
     lexical_score: float = 0.0
     vector_score: float = 0.0
+    hybrid_score: float = 0.0
     retrieval_config_version: str | None = None
 
 
@@ -197,12 +199,15 @@ class AssistantTrace(BaseModel):
     prompt_version: str
     response_schema_version: str
     retrieval_version: str
+    embedding_model: str | None = None
     retrieval_state: str = "not_run"
     provider_name: str | None = None
     model_identifier: str | None = None
     knowledge_references: list[str] = Field(default_factory=list)
     validation_outcomes: dict[str, bool] = Field(default_factory=dict)
     failure_category: AssistantErrorCode | None = None
+    provider_status: str | None = None
+    provider_latency_ms: int | None = Field(default=None, ge=0)
     started_at: datetime
     completed_at: datetime
 
@@ -240,6 +245,7 @@ class ProviderRequest(BaseModel):
     governed_context: list[GroundingCandidate]
     response_schema_version: str
     model_configuration: dict[str, str]
+    retrieval_config_version: str = ""
     correlation_id: uuid.UUID
 
 

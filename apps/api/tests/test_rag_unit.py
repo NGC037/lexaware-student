@@ -37,11 +37,11 @@ def test_chunking_overlap_and_complete_text_coverage() -> None:
 
 @pytest.mark.asyncio
 async def test_fake_embeddings_are_repeatable_batched_and_dimension_checked() -> None:
-    provider = DeterministicFakeEmbeddingProvider(32)
+    provider = DeterministicFakeEmbeddingProvider(768)
     batch = await provider.embed_texts(["same query", "same query", "other query"])
     assert batch[0] == batch[1]
     assert batch[0] != batch[2]
-    assert all(len(vector) == 32 for vector in batch)
-    validate_embeddings(["same query"], batch[:1], expected_dimension=32)
+    assert all(len(vector) == 768 for vector in batch)
+    validate_embeddings(["same query"], batch[:1], expected_dimension=768)
     with pytest.raises(EmbeddingProviderError):
-        validate_embeddings(["same query"], batch[:1], expected_dimension=31)
+        validate_embeddings(["same query"], batch[:1], expected_dimension=767)

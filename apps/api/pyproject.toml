@@ -22,6 +22,7 @@ dependencies = [
     "argon2-cffi>=23.1,<24.0",
     "email-validator>=2.2,<3.0",
     "pgvector>=0.4,<1.0",
+    "google-genai>=2.25,<3.0",
 ]
 
 
@@ -66,3 +67,7 @@ ignore = [
 [tool.mypy]
 python_version = "3.14"
 strict = true
+
+[[tool.mypy.overrides]]
+module = ["google.*"]
+ignore_missing_imports = true

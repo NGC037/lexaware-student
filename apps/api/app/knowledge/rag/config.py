@@ -6,6 +6,7 @@ from app.knowledge.rag_config import (
     CHUNK_OVERLAP,
     CHUNK_SIZE,
     CHUNKING_VERSION,
+    EMBEDDING_MODEL,
     FTS_CANDIDATE_LIMIT,
     LEXICAL_WEIGHT,
     RETRIEVAL_CONFIG_VERSION,
@@ -19,7 +20,7 @@ from app.knowledge.rag_config import (
 class RetrievalConfig:
     version: str = RETRIEVAL_CONFIG_VERSION
     fts_configuration: str = "english"
-    embedding_model: str = "deterministic-hash-v1"
+    embedding_model: str = EMBEDDING_MODEL
     embedding_dimension: int = VECTOR_DIMENSION
     chunking_version: str = CHUNKING_VERSION
     chunk_size: int = CHUNK_SIZE

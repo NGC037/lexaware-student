@@ -1,7 +1,9 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.knowledge.rag_config import RETRIEVAL_CONFIG_VERSION
 
 
 class Settings(BaseSettings):
@@ -54,6 +56,45 @@ class Settings(BaseSettings):
     # CORS — only the configured web app origin is allowed when credentials
     # (cookies) are in use. Wildcard + credentials is disallowed by the spec.
     web_app_url: str = Field(default="http://localhost:5173")
+
+    # AI providers are opt-in. Keys remain secret values and are never included in
+    # settings reprs, audit metadata, or provider error messages.
+    ai_provider: str = "disabled"
+    gemini_model: str = "gemini-3.8-flash"
+    gemini_api_key: SecretStr | None = None
+    gemini_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    gemini_temperature: float = Field(default=0.0, ge=0, le=1)
+    gemini_max_output_tokens: int = Field(default=2048, ge=128, le=8192)
+    embedding_provider: str = "disabled"
+    embedding_model: str = "gemini-embedding-001"
+    embedding_dimension: int = Field(default=768, ge=128, le=3072)
+    retrieval_config_version: str = RETRIEVAL_CONFIG_VERSION
+
+    @field_validator("ai_provider", "embedding_provider", mode="before")
+    @classmethod
+    def normalize_provider_name(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise ValueError("Provider name must be text.")
+        return value.strip().lower()
+
+    @model_validator(mode="after")
+    def validate_ai_configuration(self) -> Settings:
+        if self.ai_provider not in {"disabled", "gemini"}:
+            raise ValueError("AI_PROVIDER must be 'disabled' or 'gemini'.")
+        if self.embedding_provider not in {"disabled", "gemini"}:
+            raise ValueError("EMBEDDING_PROVIDER must be 'disabled' or 'gemini'.")
+        key_missing = (
+            self.gemini_api_key is None or not self.gemini_api_key.get_secret_value().strip()
+        )
+        if self.ai_provider == "gemini" and key_missing:
+            raise ValueError("GEMINI_API_KEY is required when AI_PROVIDER=gemini.")
+        if self.embedding_provider == "gemini" and key_missing:
+            raise ValueError("GEMINI_API_KEY is required when EMBEDDING_PROVIDER=gemini.")
+        if self.embedding_dimension != 768:
+            raise ValueError("The configured Gemini embedding dimension must match pgvector (768).")
+        if not self.retrieval_config_version.strip():
+            raise ValueError("RETRIEVAL_CONFIG_VERSION cannot be empty.")
+        return self
 
     @property
     def database_url(self) -> str:

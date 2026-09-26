@@ -84,6 +84,7 @@ def _grounding(
         source_is_active=source.is_active,
         source_effective_from=source.effective_from,
         source_effective_until=source.effective_until,
+        source_review_state="active" if source.is_active else "inactive",
     )
 
 
@@ -137,7 +138,7 @@ async def hybrid_search(
     lexical_rows = (await db.execute(lexical_statement)).all()
 
     try:
-        query_vectors = await provider.embed_texts([normalized])
+        query_vectors = await provider.embed_texts([normalized], task_type="RETRIEVAL_QUERY")
         validate_embeddings(
             [normalized], query_vectors, expected_dimension=selected.embedding_dimension
         )
@@ -221,6 +222,8 @@ async def hybrid_search(
                 "retrieval_methods": sorted(values.retrieval_methods),
                 "lexical_score": lexical_score,
                 "vector_score": vector_score,
+                "hybrid_score": selected.lexical_weight * lexical_score
+                + selected.vector_weight * vector_score,
                 "retrieval_config_version": selected.version,
             }
         )

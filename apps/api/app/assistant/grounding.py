@@ -15,6 +15,17 @@ _DEFINITIVE_PATTERNS = re.compile(
     r"guaranteed? (?:to win|legal|illegal)|definitely (?:legal|illegal|unenforceable))\b",
     re.IGNORECASE,
 )
+_UNSAFE_PATTERNS = re.compile(
+    r"\b(?:hide|destroy|delete|alter|conceal) (?:the )?(?:evidence|records|messages)\b|"
+    r"\b(?:guaranteed|guarantee|certain(?:ly)?|definitely) (?:to win|outcome|legal|illegal)\b|"
+    r"\b(?:you are guilty|they are guilty|this is illegal|this is legal)\b",
+    re.IGNORECASE,
+)
+_AUTHORITY_PATTERNS = re.compile(
+    r"\b(?:section|sec\.?|article|art\.?)\s+\d+[A-Za-z]?(?:\s*\([^)]+\))?|"
+    r"\b(?:supreme court|high court|tribunal)\s+(?:held|ruled|decided)\b",
+    re.IGNORECASE,
+)
 
 
 def is_current_candidate(candidate: GroundingCandidate, now: datetime | None = None) -> bool:
@@ -41,9 +52,11 @@ def validate_provider_content(
     now: datetime | None = None,
 ) -> list[AssistantSource]:
     if not candidates:
+        if content.status.value == "clarify" and not content.citation_keys:
+            return []
         raise GroundingValidationError("No governed sources are available.")
     keyed = {candidate.reference_key: candidate for candidate in candidates}
-    if not content.citation_keys:
+    if not content.citation_keys and content.status.value == "answer":
         raise GroundingValidationError("The response has no citations.")
     if len(content.citation_keys) != len(set(content.citation_keys)):
         raise GroundingValidationError("The response contains duplicate citations.")
@@ -74,6 +87,35 @@ def validate_provider_content(
 
 
 def contains_definitive_claim(content: AssistantProviderContent) -> bool:
+    return any(
+        _DEFINITIVE_PATTERNS.search(value) or _UNSAFE_PATTERNS.search(value)
+        for value in _text_fields(content)
+    )
+
+
+def has_unsafe_or_overconfident_claim(content: AssistantProviderContent) -> bool:
+    return any(_UNSAFE_PATTERNS.search(value) for value in _text_fields(content))
+
+
+def validate_authority_references(
+    content: AssistantProviderContent, candidates: list[GroundingCandidate]
+) -> None:
+    """Reject statute/case-style references not literally present in retrieved evidence.
+
+    This is a conservative string check, not semantic citation-entailment validation.
+    """
+    evidence = " ".join(
+        [candidate.content for candidate in candidates]
+        + [candidate.source_title for candidate in candidates]
+        + [candidate.source_citation or "" for candidate in candidates]
+    ).casefold()
+    for value in _text_fields(content):
+        for match in _AUTHORITY_PATTERNS.finditer(value):
+            if match.group(0).casefold() not in evidence:
+                raise GroundingValidationError("The response contains an unsupported authority.")
+
+
+def _text_fields(content: AssistantProviderContent) -> list[str]:
     fields = [
         content.what_this_may_mean,
         content.urgent_help,
@@ -83,4 +125,4 @@ def contains_definitive_claim(content: AssistantProviderContent) -> bool:
         *content.relevant_facts_or_dependencies,
         *content.limitations,
     ]
-    return any(_DEFINITIVE_PATTERNS.search(value) for value in fields)
+    return fields

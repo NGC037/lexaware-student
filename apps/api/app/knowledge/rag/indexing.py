@@ -63,7 +63,7 @@ async def index_knowledge_version(
         return IndexingResult(indexed=False, chunk_count=0, reason="empty_content")
     texts = [chunk.text for chunk in chunks]
     try:
-        vectors = await provider.embed_texts(texts)
+        vectors = await provider.embed_texts(texts, task_type="RETRIEVAL_DOCUMENT")
         validate_embeddings(texts, vectors, expected_dimension=selected.embedding_dimension)
     except EmbeddingProviderError:
         raise

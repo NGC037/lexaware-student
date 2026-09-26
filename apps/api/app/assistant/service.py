@@ -11,6 +11,8 @@ from app.assistant.classifier import classify_request
 from app.assistant.grounding import (
     GroundingValidationError,
     contains_definitive_claim,
+    has_unsafe_or_overconfident_claim,
+    validate_authority_references,
     validate_provider_content,
 )
 from app.assistant.prompts import PROMPT_METADATA, load_system_instructions
@@ -57,6 +59,9 @@ def _response(
     validation: dict[str, bool] | None = None,
     retrieval_state: str = "not_run",
     retrieval_version: str = RETRIEVAL_VERSION,
+    embedding_model: str | None = None,
+    provider_status: str | None = None,
+    provider_latency_ms: int | None = None,
 ) -> AssistantResponse:
     now = datetime.now(UTC)
     return AssistantResponse(
@@ -81,12 +86,15 @@ def _response(
             prompt_version=PROMPT_METADATA.version,
             response_schema_version=PROMPT_METADATA.response_schema_version,
             retrieval_version=retrieval_version,
+            embedding_model=embedding_model,
             retrieval_state=retrieval_state,
             provider_name=provider_name,
             model_identifier=model_identifier,
             knowledge_references=knowledge_references or [],
             validation_outcomes=validation or {},
             failure_category=failure_category,
+            provider_status=provider_status,
+            provider_latency_ms=provider_latency_ms,
             started_at=started_at,
             completed_at=now,
         ),
@@ -117,10 +125,13 @@ async def _record_trace(
             "prompt_id": trace.prompt_id,
             "prompt_version": trace.prompt_version,
             "retrieval_version": trace.retrieval_version,
+            "embedding_model": trace.embedding_model,
             "retrieval_state": trace.retrieval_state,
             "knowledge_references": trace.knowledge_references,
             "validation_outcomes": trace.validation_outcomes,
             "failure_category": trace.failure_category.value if trace.failure_category else None,
+            "provider_status": trace.provider_status,
+            "provider_latency_ms": trace.provider_latency_ms,
             "started_at": trace.started_at.isoformat(),
             "completed_at": trace.completed_at.isoformat(),
         },
@@ -157,6 +168,8 @@ async def handle_assistant_request(
     references: list[str] = []
     validation: dict[str, bool] = {"safety_gate": True}
     failure: AssistantErrorCode | None = None
+    provider_status: str | None = None
+    provider_latency_ms: int | None = None
     retrieval_state = "not_run"
     response_status = decision.route
 
@@ -292,6 +305,7 @@ async def handle_assistant_request(
                         governed_context=candidates,
                         response_schema_version=PROMPT_METADATA.response_schema_version,
                         model_configuration={"temperature": "0", "response_format": "json"},
+                        retrieval_config_version=selected_retrieval_config.version,
                         correlation_id=correlation_id,
                     )
                     generated = await provider.generate(provider_request)
@@ -301,6 +315,11 @@ async def handle_assistant_request(
                         raise GroundingValidationError("Provider response incomplete.")
                     if contains_definitive_claim(generated.content):
                         raise GroundingValidationError("Provider response has a definitive claim.")
+                    if has_unsafe_or_overconfident_claim(generated.content):
+                        raise GroundingValidationError(
+                            "Provider response failed safety validation."
+                        )
+                    validate_authority_references(generated.content, candidates)
                     sources = validate_provider_content(
                         generated.content, candidates, jurisdiction.code
                     )
@@ -329,9 +348,12 @@ async def handle_assistant_request(
                             prompt_version=PROMPT_METADATA.version,
                             response_schema_version=PROMPT_METADATA.response_schema_version,
                             retrieval_version=selected_retrieval_config.version,
+                            embedding_model=selected_retrieval_config.embedding_model,
                             retrieval_state="grounded",
                             provider_name=provider_name,
                             model_identifier=model_identifier,
+                            provider_status="complete",
+                            provider_latency_ms=generated.latency_ms,
                             knowledge_references=references,
                             validation_outcomes=validation,
                             started_at=started,
@@ -340,10 +362,15 @@ async def handle_assistant_request(
                     )
                     await _record_trace(db, actor_id, result, provider_name, model_identifier)
                     return result
-                except ProviderUnavailableError:
+                except ProviderUnavailableError as exc:
                     response_status = AssistantStatus.PROVIDER_UNAVAILABLE
                     error = AssistantErrorCode.PROVIDER_UNAVAILABLE
                     failure = error
+                    provider_name = provider_name or "gemini"
+                    model_identifier = model_identifier or getattr(provider, "model", None)
+                    validation["provider_" + exc.category] = False
+                    provider_status = exc.category
+                    provider_latency_ms = exc.latency_ms
                     message = "The assistant is temporarily unavailable. Please try again later."
                     validation["provider_complete"] = False
                 except Exception:
@@ -372,6 +399,9 @@ async def handle_assistant_request(
         validation=validation,
         retrieval_state=retrieval_state,
         retrieval_version=selected_retrieval_config.version,
+        embedding_model=selected_retrieval_config.embedding_model,
+        provider_status=provider_status,
+        provider_latency_ms=provider_latency_ms,
     )
     await _record_trace(db, actor_id, result, provider_name, model_identifier)
     return result
