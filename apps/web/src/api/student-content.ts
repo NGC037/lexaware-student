@@ -66,6 +66,51 @@ export type HelpResource = {
   status: "verified_current";
 };
 
+export type ComplaintGuide = {
+  id: string;
+  slug: string;
+  version_number: number;
+  title: string;
+  category: string;
+  audience: string;
+  short_description: string;
+  jurisdiction: { id: string; code: string; name: string };
+  guidance_steps: { position: number; section: string; title: string; instruction: string }[];
+  reviewed_at: string;
+};
+
+export type GovernedHelpResource = HelpResource;
+
+export type GovernedContentFilters = { category?: string; jurisdiction?: string; assistance_type?: string; limit?: number; offset?: number };
+
+function queryString(filters: GovernedContentFilters = {}) {
+  const params = new URLSearchParams();
+  for (const key of ["category", "jurisdiction", "assistance_type"] as const) {
+    const value = filters[key]?.trim();
+    if (value) params.set(key, value);
+  }
+  params.set("limit", String(filters.limit ?? 50));
+  params.set("offset", String(filters.offset ?? 0));
+  return params.toString();
+}
+
+export const complaintApi = {
+  list(filters: GovernedContentFilters = {}, signal?: AbortSignal) {
+    const params = new URLSearchParams(queryString(filters));
+    params.set("audience", "students");
+    return request<ComplaintGuide[]>(`/complaints/guides?${params.toString()}`, { signal });
+  },
+  get(slug: string, signal?: AbortSignal) {
+    return request<ComplaintGuide>(`/complaints/guides/${encodeURIComponent(slug)}`, { signal });
+  },
+};
+
+export const governedHelpApi = {
+  list(filters: GovernedContentFilters = {}, signal?: AbortSignal) {
+    return request<GovernedHelpResource[]>(`/help?${queryString(filters)}`, { signal });
+  },
+};
+
 export const knowledgeApi = {
   listArticles(filters: StudentArticleFilters = {}, signal?: AbortSignal) {
     const params = new URLSearchParams({ audience: "students", limit: String(filters.limit ?? 12), offset: String(filters.offset ?? 0) });
