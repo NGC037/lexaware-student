@@ -7,6 +7,8 @@ import { StudentArticlePage } from "../features/knowledge/StudentArticlePage";
 import { ComplaintGuidesPage, ComplaintGuidePage } from "../features/knowledge/ComplaintGuidancePage";
 import { HelpDirectoryPage } from "../features/knowledge/HelpDirectoryPage";
 import { AssistantPage } from "../features/application/AssistantPage";
+import { DocumentDetailPage } from "../features/documents/DocumentDetailPage";
+import { DocumentVaultPage } from "../features/documents/DocumentVaultPage";
 import { LoginPage } from "../features/auth/LoginPage";
 import { RegisterPage } from "../features/auth/RegisterPage";
 import { LandingPage } from "../features/landing/LandingPage";
@@ -27,6 +29,8 @@ export function App() {
         <Route path="/app/rights" element={<RightsExplorerPage />} />
         <Route path="/app/rights/:slug" element={<StudentArticlePage />} />
         <Route path="/app/assistant" element={<AssistantPage />} />
+        <Route path="/app/documents" element={<DocumentVaultPage />} />
+        <Route path="/app/documents/:id" element={<DocumentDetailPage />} />
         <Route path="/app/complaints" element={<ComplaintGuidesPage />} />
         <Route path="/app/complaints/:slug" element={<ComplaintGuidePage />} />
         <Route path="/app/help" element={<HelpDirectoryPage />} />

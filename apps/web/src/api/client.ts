@@ -44,7 +44,7 @@ export function normalizeError(status: number, payload: unknown, correlationId?:
 }
 
 export type RequestOptions = Omit<RequestInit, "body"> & { body?: unknown; timeoutMs?: number };
-export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+async function withResponse<T>(path: string, options: RequestOptions, decode: (response: Response) => Promise<T>): Promise<T> {
   const { timeoutMs = 15_000, body, headers: suppliedHeaders, ...init } = options;
   const method = (init.method ?? (body === undefined ? "GET" : "POST")).toUpperCase();
   const headers = new Headers(suppliedHeaders);
@@ -57,13 +57,26 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       ...init, method, headers, credentials: "include", signal: init.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal,
       body: body === undefined ? undefined : body instanceof FormData || typeof body === "string" ? body : JSON.stringify(body),
     });
-    const text = await response.text();
-    let payload: unknown;
-    try { payload = text ? JSON.parse(text) as unknown : undefined; } catch { payload = text; }
     if (!response.ok) {
+      const text = await response.text();
+      let payload: unknown;
+      try { payload = text ? JSON.parse(text) as unknown : undefined; } catch { payload = text; }
       if (response.status === 401) unauthorizedHandler?.();
       throw normalizeError(response.status, payload, response.headers.get("X-Correlation-ID") ?? undefined);
     }
-    return payload as T;
+    return await decode(response);
   } finally { window.clearTimeout(timeout); }
+}
+
+export function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  return withResponse(path, options, async (response) => {
+    const text = await response.text();
+    if (!text) return undefined as T;
+    try { return JSON.parse(text) as T; } catch { return text as T; }
+  });
+}
+
+/** Fetch a protected binary response with the same cookie, CSRF, timeout, and error handling. */
+export function requestBlob(path: string, options: RequestOptions = {}): Promise<Blob> {
+  return withResponse(path, options, (response) => response.blob());
 }

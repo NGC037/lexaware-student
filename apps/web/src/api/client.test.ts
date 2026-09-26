@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { authApi } from "./auth";
-import { normalizeError, request } from "./client";
+import { normalizeError, request, requestBlob } from "./client";
 
 describe("API client foundations", () => {
   beforeEach(() => { vi.stubGlobal("fetch", vi.fn()); document.cookie = "lexaware_csrf=token%2Bvalue; path=/"; });
@@ -29,5 +29,14 @@ describe("API client foundations", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/auth/csrf");
     expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("X-CSRF-Token")).toBe("fresh-token");
+  });
+  it("returns authenticated binary responses without JSON parsing", async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce(new Response("%PDF-1.4", { status: 200, headers: { "Content-Type": "application/pdf" } }));
+    const blob = await requestBlob("/documents/document-id/download");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/api/v1/documents/document-id/download");
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ credentials: "include", method: "GET" });
+    expect(blob).toBeInstanceOf(Blob);
+    expect(blob.type).toBe("application/pdf");
   });
 });
