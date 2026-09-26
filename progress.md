@@ -460,3 +460,14 @@ Status: implementation and validation complete.
 - All 31 blockchain integration test checks passed in `test_blockchain.ps1`.
 - Backend/chaincode CI validations (pytest, npm test, Ruff, mypy, Alembic check) pass.
 - Known limitations: Local Fabric network is used for development/testing; production Fabric infrastructure is not provisioned.
+
+### F10 - Product Hardening (Sub-phase 1)
+
+Status: implementation and validation complete.
+
+- Added CI workflow with GitHub Actions for automated lint, type check, migration verification, and full test suite execution, correctly configuring MinIO and ClamAV services.
+- Configured standard library text logging, safe against duplicate handler attachment.
+- Added SecurityHeadersMiddleware applying X-Content-Type-Options: nosniff, X-Frame-Options: DENY, X-XSS-Protection: 0, Referrer-Policy: strict-origin-when-cross-origin, and Permissions-Policy headers.
+- Configured HSTS (Strict-Transport-Security) to be active only in production to prevent localhost development HTTP lockouts.
+- Added global exception handler to intercept unhandled server errors, returning generic 500 JSON without exposing stack traces, paths, or credentials, while allowing HTTPException and RequestValidationError to operate normally.
+- Verified all integration tests, unit tests, linters, and type checkers pass.

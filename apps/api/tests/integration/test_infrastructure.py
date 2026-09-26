@@ -1,4 +1,4 @@
-from sqlalchemy import text
+﻿from sqlalchemy import text
 
 from app.core.redis import redis_client
 from app.db.session import engine
@@ -26,5 +26,5 @@ async def test_alembic_and_pgvector_state() -> None:
         revision = revision_result.scalar_one()
         extension_version = extension_result.scalar_one()
 
-    assert revision == "b71d2459c30a"
+    assert revision == "f9a17b2c6d40"
     assert extension_version
