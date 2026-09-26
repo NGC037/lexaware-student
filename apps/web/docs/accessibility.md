@@ -1,0 +1,7 @@
+# Accessibility and responsive behavior
+
+The frontend targets WCAG 2.2 AA practices from its foundation: semantic landmarks, a skip link, a single page-level heading, labelled controls, keyboard-operable navigation, visible focus, meaningful link names, status information that does not rely only on color, and reduced-motion handling. The mobile menu uses a real button with `aria-expanded` and `aria-controls`; its links remain ordinary anchors. Theme choice uses a labelled native select. Registration and login fields have persistent labels, correct autocomplete values, password visibility controls, focused error summaries, live submission status, and disabled submit controls while requests are pending. Onboarding moves focus to each new step heading.
+
+Layout styles use mobile-first adjustments for narrow phones, compact/tablet widths, and wide screens. Content stays within a readable maximum width, cards collapse to one column on small screens, and controls keep touch-friendly dimensions. Dark theme has separately selected semantic colors. Forced-colors mode retains explicit borders and native contrast behavior.
+
+When adding forms, associate persistent labels and field errors with controls, announce asynchronous results using suitable live regions, preserve focus on route changes, and test keyboard-only workflows. Check contrast for any new palette use and verify reflow at 320 CSS pixels and 200% zoom. Automated tests are useful but do not replace assistive-technology review.
