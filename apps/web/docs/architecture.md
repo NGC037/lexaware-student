@@ -1,6 +1,6 @@
 # Frontend foundation architecture
 
-The web app is a React 19, TypeScript, and Vite single-page application. It includes the public landing page, registration and login, session-aware routing, a short onboarding introduction, and an authenticated student dashboard. The dashboard searches published student guidance and previews verified help contacts through existing backend APIs. Full article browsing/detail, Help Directory, assistant, document, and complaint workflows are not implemented in the frontend.
+The web app is a React 19, TypeScript, and Vite single-page application. It includes the public landing page, registration and login, session-aware routing, a short onboarding introduction, and an authenticated student workspace. Student features include the dashboard, Rights Explorer and article detail, governed complaint guidance, verified Help Directory, and a one-request-at-a-time legal-awareness assistant. Document analysis remains a future frontend workflow.
 
 ## Source layout
 
@@ -9,18 +9,19 @@ The web app is a React 19, TypeScript, and Vite single-page application. It incl
 - `src/features/auth`: registration/login forms and safe error mapping.
 - `src/features/onboarding`: non-persistent welcome introduction.
 - `src/features/application`: authenticated entry shell.
+- `src/features/knowledge`: rights exploration, complaint guidance, and verified help directory.
 - `src/features/landing`: public landing and not-found pages.
 - `src/shared/components`: brand, buttons, status badges/panels, and section heading.
 - `src/shared/layout`: responsive site header, main layout, footer.
 - `src/shared/theme`: theme preference control.
-- `src/api`: fetch client, normalized API errors, authentication, liveness, student guidance search, and verified support contracts.
+- `src/api`: fetch client, normalized API errors, authentication, liveness, governed student-content contracts, and assistant request/response contracts.
 - `src/styles`: semantic design tokens and global responsive styling.
 
 Keep business behavior in a feature as it is introduced. Keep API types close to the API module that owns them. Do not duplicate backend authorization decisions in the browser.
 
 ## Routing and application states
 
-`BrowserRouter` routes `/`, `/register`, `/login`, `/onboarding`, and `/app`. Unauthenticated access to `/app` redirects to `/login`; authenticated access to `/login` or `/register` goes to onboarding or `/app`. `/app` requires the real `/auth/me` identity and the current tab's onboarding marker. Unknown paths explain that the page is unavailable and link home. The development and production host must serve `index.html` for unknown paths.
+`BrowserRouter` routes `/`, `/register`, `/login`, `/onboarding`, `/app`, `/app/rights`, `/app/rights/:slug`, `/app/complaints`, `/app/complaints/:slug`, `/app/help`, and `/app/assistant`. Student workspace routes use the existing real-session guard. Unauthenticated access redirects to `/login`; `/app` requires the current tab's onboarding marker. Unknown paths explain that the page is unavailable and link home. The development and production host must serve `index.html` for deep routes.
 
 ## Authentication and session
 
@@ -44,7 +45,7 @@ The backend has no onboarding-completion field or endpoint. The short, skippable
 
 `VITE_API_BASE_URL` configures the versioned API prefix; local development defaults to `http://localhost:8000/api/v1`. The client includes cookies (`credentials: include`), JSON-encodes ordinary request bodies, adds the existing `lexaware_csrf` double-submit token on unsafe requests, supports abort and finite timeout behavior, and normalizes both FastAPI `detail` responses and the assistant's `{error:{code,message}}` envelope. It preserves field details and `X-Correlation-ID` when present. It does not invent endpoint contracts or apply client-side role checks.
 
-The API modules cover auth, `GET /health` (liveness), `GET /knowledge/articles` with a bounded student-audience search, and `GET /help?limit=3` for the dashboard's verified-contact preview. Search text remains in component memory, is not persisted, and is cancellable on unmount. The browser presents source links only for HTTP(S) URLs. Help actions use backend-validated contact data and the response's `verified_current` contract. Activity, saved-item, and announcement endpoints are absent; the dashboard says so rather than manufacturing content. `/ready` exposes infrastructure state and is not used as a browser health indicator. Feature API modules should be added alongside the corresponding product feature when that UI is implemented.
+The API modules cover auth, `GET /health` (liveness), governed knowledge, published complaint guides, verified help resources, and `POST /assistant/messages`. Assistant requests use the backend's message/jurisdiction/topic schema and return typed status, structured guidance, citations, limitations, uncertainty, optional verified resources, and a trace. The assistant is non-streaming and has no server-side conversation history; the UI keeps only the current request/response in component memory and does not render trace metadata as student-facing content. Source links are restricted to HTTP(S). Cookie-authenticated POSTs use the shared client's CSRF handling. Activity, saved-item, and announcement endpoints are absent; the dashboard says so rather than manufacturing content. `/ready` exposes infrastructure state and is not used as a browser health indicator.
 
 The authenticated shell uses a compact floating horizontal header rather than a persistent sidebar. Actions without frontend routes are non-interactive and labelled as coming soon. The dashboard's lightweight shield/book mark is layered SVG with CSS perspective and pointer-limited rotation; it has no WebGL, canvas, third-party 3D dependency, or continuous render loop. The static vector remains visible with reduced motion, which disables the transform and entrance animation. Responsive layouts stack the hero and actions and keep the support preview in normal document flow.
 

@@ -104,9 +104,9 @@ describe("authenticated student dashboard", () => {
     await screen.findByText("Student Support Centre");
     await user.click(screen.getByRole("link", { name: /Find reviewed help/ }));
     expect(window.location.hash).toBe("#dashboard-support");
-    expect(screen.getAllByText("Coming soon")).toHaveLength(2);
+    expect(screen.getAllByText("Coming soon")).toHaveLength(1);
     expect(screen.getAllByRole("link", { name: /Complaint guidance/ }).some((link) => link.getAttribute("href") === "/app/complaints")).toBe(true);
-    expect(screen.getByText("Ask the assistant").closest("a,button")).toBeNull();
+    expect(screen.getByRole("link", { name: /Guided legal awareness/ })).toHaveAttribute("href", "/app/assistant");
     await user.selectOptions(screen.getByRole("combobox", { name: "Color theme" }), "dark");
     await waitFor(() => expect(document.documentElement).toHaveAttribute("data-theme", "dark"));
   });
