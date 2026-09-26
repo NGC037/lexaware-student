@@ -14,6 +14,7 @@ from app.help.schemas import (
     StudentHelpResourceRead,
     VerifyHelpResource,
 )
+from app.provenance.service import canonical_sha256, queue_anchor, queue_transition
 
 
 def _source_is_current(source: Source, now: datetime) -> bool:
@@ -134,6 +135,7 @@ async def update_help_resource(
         )
     await _validate_resource_scope(db, jurisdiction_id, source_id)
 
+    previous_version = resource.version_number
     for key, value in changes.items():
         if (
             key
@@ -156,6 +158,16 @@ async def update_help_resource(
         elif key == "contact_email" and value is not None:
             value = str(value)
         setattr(resource, key, value)
+
+    resource.version_number += 1
+    await queue_transition(
+        db,
+        object_type="help_resource",
+        object_id=resource.id,
+        version=previous_version,
+        action="revoke",
+        actor_id=actor_id,
+    )
 
     _validate_contact_bundle(
         resource.contact_method, resource.phone, resource.contact_url, resource.contact_email
@@ -228,6 +240,29 @@ async def verify_help_resource(
         actor_id=actor_id,
         details={"verification_due_at": req.verification_due_at.isoformat(), "status": "active"},
     )
+    await queue_anchor(
+        db,
+        object_type="help_resource",
+        object_id=resource.id,
+        version=resource.version_number,
+        content_hash=canonical_sha256(
+            {
+                "schema": "verified-help-resource-v1",
+                "resource_id": str(resource.id),
+                "version_number": resource.version_number,
+                "jurisdiction_id": str(resource.jurisdiction_id),
+                "source_id": str(resource.source_id),
+                "category": resource.category,
+                "resource_type": resource.resource_type,
+                "assistance_type": resource.assistance_type,
+                "contact_method": resource.contact_method,
+                "verified_at": resource.verified_at.isoformat(),
+                "verification_due_at": resource.verification_due_at.isoformat(),
+                "expires_at": resource.expires_at.isoformat() if resource.expires_at else None,
+            }
+        ),
+        actor_id=actor_id,
+    )
     await db.commit()
     await db.refresh(resource)
     return resource
@@ -242,6 +277,14 @@ async def retire_help_resource(
             status_code=status.HTTP_404_NOT_FOUND, detail="Help resource not found."
         )
     resource.status = ResourceStatus.RETIRED
+    await queue_transition(
+        db,
+        object_type="help_resource",
+        object_id=resource.id,
+        version=resource.version_number,
+        action="revoke",
+        actor_id=actor_id,
+    )
     resource.verified_at = None
     resource.verified_by_id = None
     resource.verification_due_at = None

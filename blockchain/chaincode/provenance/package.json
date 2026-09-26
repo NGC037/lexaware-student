@@ -1,0 +1,10 @@
+{
+  "name": "lexaware-provenance-chaincode",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal private-network provenance ledger for LexAware Student",
+  "main": "index.js",
+  "scripts": { "test": "node --test" },
+  "engines": { "node": ">=18" },
+  "dependencies": { "fabric-contract-api": "^2.5.8" }
+}

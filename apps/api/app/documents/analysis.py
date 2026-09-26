@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import io
 import json
 import re
@@ -12,6 +11,8 @@ from typing import Any
 from uuid import UUID
 
 from pypdf import PdfReader
+
+from app.provenance.service import canonical_sha256
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,5 +308,5 @@ def create_report_manifest(
 
 
 def hash_report_manifest(manifest: dict[str, Any]) -> str:
-    canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    """Hash the canonical manifest using the shared provenance serializer."""
+    return canonical_sha256(manifest)

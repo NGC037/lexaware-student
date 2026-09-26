@@ -1,0 +1,20 @@
+name: lexaware-fabric-gateway
+
+services:
+  fabric-gateway:
+    build: .
+    restart: unless-stopped
+    environment:
+      FABRIC_GATEWAY_TOKEN: ${FABRIC_GATEWAY_TOKEN:?Set FABRIC_GATEWAY_TOKEN in the local root .env}
+      FABRIC_PEER_ENDPOINT: host.docker.internal:7051
+      FABRIC_TLS_CERT: /crypto/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt
+      FABRIC_ID_CERT: /crypto/peerOrganizations/org1.example.com/users/provenance-writer@org1.example.com/msp/signcerts/cert.pem
+      FABRIC_ID_KEY: /crypto/peerOrganizations/org1.example.com/users/provenance-writer@org1.example.com/msp/keystore
+      FABRIC_CHANNEL: ${FABRIC_CHANNEL:-provenance}
+      FABRIC_CHAINCODE: ${FABRIC_CHAINCODE:-provenance}
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ${FABRIC_NETWORK_DIR:?Set FABRIC_NETWORK_DIR to the local Fabric organizations directory}:/crypto:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

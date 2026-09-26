@@ -117,6 +117,10 @@ reports/generated/
 # ------------------------------------------------------------
 blockchain/data/
 blockchain/.generated/
+blockchain/fabric-samples/
+blockchain/bin/
+blockchain/config/
+blockchain/*.tar.gz
 
 # ------------------------------------------------------------
 # OS-specific

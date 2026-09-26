@@ -24,6 +24,7 @@ from app.documents.analysis import (
 )
 from app.documents.lifecycle import transition_document
 from app.documents.storage import ObjectStorage
+from app.provenance.service import queue_anchor
 
 
 class MalwareScanner(Protocol):
@@ -177,13 +178,21 @@ async def run_document_job(
         else:
             transition_document(document, DocumentStatus.ANALYZING)
             transition_document(document, DocumentStatus.COMPLETED)
-        session.add(
-            DocumentAnalysisReport(
-                document_id=document.id,
-                report_version=1,
-                manifest=manifest,
-                manifest_sha256=manifest_hash,
-            )
+        report = DocumentAnalysisReport(
+            document_id=document.id,
+            report_version=1,
+            manifest=manifest,
+            manifest_sha256=manifest_hash,
+        )
+        session.add(report)
+        await session.flush()
+        await queue_anchor(
+            session,
+            object_type="document_report",
+            object_id=report.id,
+            version=report.report_version,
+            content_hash=manifest_hash,
+            actor_id=document.owner_id,
         )
         job.status = "completed"
         job.finished_at = datetime.now(UTC)

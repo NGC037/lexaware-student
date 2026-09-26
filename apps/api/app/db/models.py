@@ -433,6 +433,47 @@ class DocumentAnalysisReport(TimestampMixin, Base):
     document: Mapped[Document] = relationship(back_populates="analysis_report")
 
 
+class ProvenanceAnchor(TimestampMixin, Base):
+    """Application-side outbox and current status for a minimal ledger proof."""
+
+    __tablename__ = "provenance_anchors"
+    __table_args__ = (
+        UniqueConstraint(
+            "object_type", "object_id", "version", name="uq_provenance_anchor_object_version"
+        ),
+        CheckConstraint("version > 0", name="ck_provenance_anchor_positive_version"),
+        CheckConstraint("attempts >= 0", name="ck_provenance_anchor_nonnegative_attempts"),
+        CheckConstraint(
+            "anchor_status IN ('pending', 'anchored', 'failed', 'revoked', 'superseded')",
+            name="ck_provenance_anchor_status",
+        ),
+        CheckConstraint(
+            "action IN ('anchor', 'revoke', 'supersede')", name="ck_provenance_anchor_action"
+        ),
+        Index("ix_provenance_anchors_claim", "anchor_status", "next_attempt_at"),
+        Index("ix_provenance_anchors_owner_object", "object_type", "object_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    object_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    object_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    version: Mapped[int] = mapped_column(nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    network: Mapped[str] = mapped_column(String(80), nullable=False)
+    anchor_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    action: Mapped[str] = mapped_column(String(16), nullable=False, default="anchor")
+    transaction_id: Mapped[str | None] = mapped_column(String(128))
+    anchored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    superseded_by_version: Mapped[int | None] = mapped_column()
+    attempts: Mapped[int] = mapped_column(default=0, server_default="0", nullable=False)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_failure_code: Mapped[str | None] = mapped_column(String(64))
+    requested_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+
 class DocumentAccess(TimestampMixin, Base):
     __tablename__ = "document_access"
     __table_args__ = (
@@ -484,6 +525,7 @@ class AuditEvent(Base):
 class HelpResource(TimestampMixin, Base):
     __tablename__ = "help_resources"
     __table_args__ = (
+        CheckConstraint("version_number > 0", name="ck_help_resources_positive_version"),
         Index("ix_help_resources_jurisdiction_status", "jurisdiction_id", "status"),
         Index(
             "ix_help_resources_jurisdiction_category_assistance_status",
@@ -496,6 +538,7 @@ class HelpResource(TimestampMixin, Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    version_number: Mapped[int] = mapped_column(default=1, server_default="1", nullable=False)
     jurisdiction_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("jurisdictions.id", ondelete="RESTRICT"), nullable=False
     )

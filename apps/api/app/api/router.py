@@ -14,6 +14,7 @@ from app.db.session import engine
 from app.documents.router import document_router
 from app.help.router import admin_help_router, help_router
 from app.knowledge.router import admin_knowledge_router, knowledge_router
+from app.provenance.router import provenance_router
 
 settings = get_settings()
 
@@ -27,6 +28,7 @@ router.include_router(help_router)
 router.include_router(admin_help_router)
 router.include_router(assistant_router)
 router.include_router(document_router)
+router.include_router(provenance_router)
 
 
 @router.get(

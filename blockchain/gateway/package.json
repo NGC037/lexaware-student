@@ -1,0 +1,13 @@
+{
+  "name": "lexaware-fabric-gateway",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Private HTTP boundary to the Hyperledger Fabric Gateway SDK",
+  "main": "server.js",
+  "scripts": { "start": "node server.js", "test": "node --test" },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.13.4",
+    "@hyperledger/fabric-gateway": "^1.7.1"
+  }
+}

@@ -167,6 +167,35 @@ services:
     networks:
       - lexaware
 
+  provenance-worker:
+    build:
+      context: ../../apps/api
+      dockerfile: Dockerfile
+    container_name: lexaware-provenance-worker
+    restart: unless-stopped
+    command: ["python", "-m", "app.workers.provenance_worker"]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-lexaware}
+      POSTGRES_USER: ${POSTGRES_USER:-lexaware}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      BLOCKCHAIN_ENABLED: ${BLOCKCHAIN_ENABLED:-false}
+      FABRIC_GATEWAY_ENDPOINT: ${FABRIC_GATEWAY_DOCKER_ENDPOINT:-http://host.docker.internal:8080}
+      FABRIC_GATEWAY_TOKEN: ${FABRIC_GATEWAY_TOKEN:-}
+      FABRIC_NETWORK: ${FABRIC_NETWORK:-local-fabric}
+      FABRIC_CHANNEL: ${FABRIC_CHANNEL:-provenance}
+      FABRIC_CHAINCODE: ${FABRIC_CHAINCODE:-provenance}
+      PROVENANCE_WORKER_POLL_SECONDS: ${PROVENANCE_WORKER_POLL_SECONDS:-5}
+      PROVENANCE_REQUEST_TIMEOUT_SECONDS: ${PROVENANCE_REQUEST_TIMEOUT_SECONDS:-10}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - lexaware
+
 volumes:
   postgres_data:
   redis_data:

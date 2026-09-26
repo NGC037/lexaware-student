@@ -34,6 +34,7 @@ from app.knowledge.schemas import (
     StudentArticleDetail,
     StudentArticleListItem,
 )
+from app.provenance.service import canonical_sha256, queue_anchor, queue_transition
 
 
 class KnowledgeInvariantError(HTTPException):
@@ -541,6 +542,15 @@ async def publish_version(
                     "superseded_by_version": version.version_number,
                 },
             )
+            await queue_transition(
+                db,
+                object_type="knowledge_version",
+                object_id=other_ver.id,
+                version=other_ver.version_number,
+                action="supersede",
+                actor_id=publisher_id,
+                superseded_by_version=version.version_number,
+            )
 
     # Promote target version to PUBLISHED
     version.publication_state = PublicationState.PUBLISHED
@@ -565,6 +575,39 @@ async def publish_version(
             "version_number": version.version_number,
             "published_at": now.isoformat(),
         },
+    )
+
+    await queue_anchor(
+        db,
+        object_type="knowledge_version",
+        object_id=version.id,
+        version=version.version_number,
+        content_hash=canonical_sha256(
+            {
+                "schema": "knowledge-version-v1",
+                "version_id": str(version.id),
+                "version_number": version.version_number,
+                "item_id": str(item.id),
+                "jurisdiction_id": str(item.jurisdiction_id),
+                "category": item.category,
+                "audience": item.audience,
+                "title": version.title or item.title,
+                "summary": version.summary,
+                "content": version.content,
+                "tags": version.tags,
+                "keywords": version.keywords,
+                "synonyms": version.synonyms,
+                "applicability_notes": version.applicability_notes,
+                "escalation_guidance": version.escalation_guidance,
+                "effective_from": version.effective_from.isoformat()
+                if version.effective_from
+                else None,
+                "effective_until": version.effective_until.isoformat()
+                if version.effective_until
+                else None,
+            }
+        ),
+        actor_id=publisher_id,
     )
 
     await db.commit()
@@ -603,6 +646,14 @@ async def unpublish_version(
         resource_id=version.id,
         actor_id=publisher_id,
         details={"version_number": version.version_number, "reason": reason},
+    )
+    await queue_transition(
+        db,
+        object_type="knowledge_version",
+        object_id=version.id,
+        version=version.version_number,
+        action="revoke",
+        actor_id=publisher_id,
     )
     await db.commit()
     await db.refresh(version)

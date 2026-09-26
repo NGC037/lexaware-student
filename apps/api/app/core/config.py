@@ -44,6 +44,17 @@ class Settings(BaseSettings):
     clamav_port: int = Field(default=3310, ge=1, le=65535)
     clamav_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
 
+    # Provenance writes are asynchronous. The gateway token is shared only by
+    # private API/worker and gateway containers and is never returned to clients.
+    blockchain_enabled: bool = False
+    fabric_gateway_endpoint: str = "http://fabric-gateway:8080"
+    fabric_gateway_token: SecretStr | None = None
+    fabric_network: str = "local-fabric"
+    fabric_channel: str = "provenance"
+    fabric_chaincode: str = "provenance"
+    provenance_worker_poll_seconds: float = Field(default=5.0, gt=0, le=60)
+    provenance_request_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+
     # ------------------------------------------------------------------
     # Authentication
     # NOTE: auth_secret_key is NOT used to sign the current opaque session

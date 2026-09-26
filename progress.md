@@ -444,3 +444,19 @@ Status: frontend implementation and validation complete; no commit or push perfo
 - During validation, the pre-existing Compose containers used stale defaults that pointed the worker to a different document bucket and PostgreSQL host port than the API's root `.env`. Compose services were restarted with the repository `.env`; API/database/cache readiness and worker access to the private object store were then verified. This was an environment alignment issue; no backend implementation was changed.
 - Known limitations: OCR is unavailable, and review signals come from the backend's deterministic text patterns rather than Gemini-generated analysis. Gemini remains deferred. The upload form mirrors the backend's 10 MiB default; server-side upload limits remain authoritative.
 - `README.md` contained a pre-existing modification and was preserved. No commit or push was performed.
+
+### F9 - Establish Blockchain Provenance
+
+Status: implementation and validation complete.
+
+- Implemented `ProvenanceAnchor` outbox model and Alembic migration `f9a17b2c6d40`.
+- Developed `ProvenanceGateway` using Python and Node.js.
+- Developed Hyperledger Fabric smart contract (`provenance` chaincode) with version transition controls, duplicate detection, and hash-conflict detection.
+- Integrated selective anchoring into document reports, help resources, and knowledge APIs.
+- Established local Fabric 2.5 network, enrolled writer identities, and deployed chaincode.
+- Real blockchain transactions executed. Verified that no student name, email, personal data, document content, prompts, or reports were written to the ledger (ledger contains only `object_type`, `object_id`, `version`, `content_hash`, and timestamps).
+- Verified immutable provenance transitions (anchor, revoke, supersede).
+- Verified outbox queuing works correctly and retries failures, handling Fabric outage scenarios safely as pending status.
+- All 31 blockchain integration test checks passed in `test_blockchain.ps1`.
+- Backend/chaincode CI validations (pytest, npm test, Ruff, mypy, Alembic check) pass.
+- Known limitations: Local Fabric network is used for development/testing; production Fabric infrastructure is not provisioned.
