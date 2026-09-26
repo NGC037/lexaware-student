@@ -11,6 +11,7 @@ from app.core.redis import check_redis_connection
 from app.db.health import check_database_connection
 from app.db.models import User
 from app.db.session import engine
+from app.documents.router import document_router
 from app.help.router import admin_help_router, help_router
 from app.knowledge.router import admin_knowledge_router, knowledge_router
 
@@ -25,6 +26,7 @@ router.include_router(admin_complaint_router)
 router.include_router(help_router)
 router.include_router(admin_help_router)
 router.include_router(assistant_router)
+router.include_router(document_router)
 
 
 @router.get(

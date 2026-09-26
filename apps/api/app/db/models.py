@@ -57,9 +57,15 @@ class PublicationState(enum.StrEnum):
 
 class DocumentStatus(enum.StrEnum):
     UPLOADED = "uploaded"
+    VALIDATING = "validating"
+    VALIDATED = "validated"
     PROCESSING = "processing"
-    READY = "ready"
+    EXTRACTED = "extracted"
+    ANALYZING = "analyzing"
+    COMPLETED = "completed"
+    READY = "ready"  # Legacy state retained for existing records.
     FAILED = "failed"
+    UNSUPPORTED = "unsupported"
     DELETED = "deleted"
 
 
@@ -331,7 +337,19 @@ class Document(TimestampMixin, Base):
     __tablename__ = "documents"
     __table_args__ = (
         CheckConstraint("size_bytes >= 0", name="ck_documents_nonnegative_size"),
+        CheckConstraint(
+            "classification_confidence IS NULL OR "
+            "(classification_confidence >= 0 AND classification_confidence <= 1)",
+            name="ck_documents_classification_confidence",
+        ),
         Index("ix_documents_owner_status", "owner_id", "status"),
+        Index(
+            "uq_documents_owner_content_hash_active",
+            "owner_id",
+            "content_hash",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL AND content_hash IS NOT NULL"),
+        ),
         UniqueConstraint("storage_key", name="uq_documents_storage_key"),
     )
 
@@ -350,11 +368,69 @@ class Document(TimestampMixin, Base):
         nullable=False,
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    page_count: Mapped[int | None] = mapped_column()
+    extraction_metadata: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+    document_type: Mapped[str | None] = mapped_column(String(48))
+    classification_confidence: Mapped[float | None] = mapped_column()
+    needs_ocr: Mapped[bool] = mapped_column(default=False, nullable=False, server_default="false")
+    malware_scan_state: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="not_configured", server_default="not_configured"
+    )
 
     owner: Mapped[User] = relationship(back_populates="documents")
     access_grants: Mapped[list[DocumentAccess]] = relationship(
         back_populates="document", cascade="all, delete-orphan"
     )
+    processing_job: Mapped[DocumentProcessingJob | None] = relationship(
+        back_populates="document", cascade="all, delete-orphan", uselist=False
+    )
+    analysis_report: Mapped[DocumentAnalysisReport | None] = relationship(
+        back_populates="document", cascade="all, delete-orphan", uselist=False
+    )
+
+
+class DocumentProcessingJob(TimestampMixin, Base):
+    __tablename__ = "document_processing_jobs"
+    __table_args__ = (
+        CheckConstraint("attempts >= 0", name="ck_document_jobs_nonnegative_attempts"),
+        CheckConstraint(
+            "status IN ('queued', 'processing', 'completed', 'failed', 'blocked')",
+            name="ck_document_jobs_status",
+        ),
+        Index("ix_document_jobs_claim", "status", "available_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="queued")
+    attempts: Mapped[int] = mapped_column(default=0, server_default="0", nullable=False)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failure_code: Mapped[str | None] = mapped_column(String(80))
+
+    document: Mapped[Document] = relationship(back_populates="processing_job")
+
+
+class DocumentAnalysisReport(TimestampMixin, Base):
+    __tablename__ = "document_analysis_reports"
+    __table_args__ = (
+        UniqueConstraint("document_id", "report_version", name="uq_document_report_version"),
+        CheckConstraint("report_version > 0", name="ck_document_report_positive_version"),
+        Index("ix_document_reports_manifest_hash", "manifest_sha256"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    )
+    report_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    manifest: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    manifest_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    document: Mapped[Document] = relationship(back_populates="analysis_report")
 
 
 class DocumentAccess(TimestampMixin, Base):
@@ -560,7 +636,7 @@ class UserCredential(TimestampMixin, Base):
     This table is intentionally separate from User so the identity record
     remains clean for future OAuth/SSO integration.  The email field stores
     the normalised (lower-cased) address and acts as the login identifier.
-    The password_hash field stores the Argon2id digest — never plaintext.
+    The password_hash field stores the Argon2id digest â€” never plaintext.
 
     Constraint: 1-to-1 with User; deleting a User cascades to this record.
     """

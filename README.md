@@ -120,3 +120,10 @@ docs/
 
 infra/                 Infrastructure and deployment configuration
 ```
+
+
+## Private Document Analyzer foundation
+
+PDF endpoints are mounted at /api/v1/documents. Uploads are owner-private in MinIO. Start the development scanner and worker with `docker compose -f infra/docker/docker-compose.yml up -d --build clamav document-worker` after PostgreSQL and MinIO are healthy. ClamAV downloads signatures on first start; the worker waits until the scanner health check passes. The scanner port is bound to loopback for host-run integration tests and is not exposed on public interfaces.
+
+The worker streams each size-bounded PDF to ClamAV. Only an explicit clean verdict permits extraction; unavailable, infected, and error states fail closed. Image-only pages return a needs-OCR/unsupported report; OCR and Gemini document analysis are not implemented. See ADR 0010 for the lifecycle, privacy, retry, and report-manifest design.

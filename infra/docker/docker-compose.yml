@@ -112,10 +112,66 @@ services:
     networks:
       - lexaware
 
+  clamav:
+    image: clamav/clamav:1.4.6
+    container_name: lexaware-clamav
+    restart: unless-stopped
+    volumes:
+      - clamav_data:/var/lib/clamav
+
+    # Loopback only for host-run integration tests; never bind on public interfaces.
+    ports:
+      - "127.0.0.1:3310:3310"
+
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --ping=3 --no-summary /etc/hostname >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+    networks:
+      - lexaware
+
+  document-worker:
+    build:
+      context: ../../apps/api
+      dockerfile: Dockerfile
+    container_name: lexaware-document-worker
+    restart: unless-stopped
+
+    command: ["python", "-m", "app.workers.document_worker"]
+
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-lexaware}
+      POSTGRES_USER: ${POSTGRES_USER:-lexaware}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: us-east-1
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-lexaware}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-change-me-minio}
+      S3_BUCKET: ${S3_BUCKET:-lexaware-documents-private}
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: 3310
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      clamav:
+        condition: service_healthy
+
+    networks:
+      - lexaware
+
 volumes:
   postgres_data:
   redis_data:
   minio_data:
+  clamav_data:
 
 networks:
   lexaware:

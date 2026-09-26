@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import router
 from app.core.config import get_settings
+from app.core.middleware import UploadBodySizeLimitMiddleware
 from app.core.redis import close_redis_connection
 from app.db.session import engine
 
@@ -43,6 +44,7 @@ def create_application() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    application.add_middleware(UploadBodySizeLimitMiddleware)
 
     application.include_router(
         router,

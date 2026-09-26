@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     s3_secret_key: str = "change-me-minio"
     s3_bucket: str = "lexaware-documents-private"
     s3_region: str = "us-east-1"
+    document_max_upload_bytes: int = Field(default=10_485_760, ge=1024, le=52_428_800)
+    document_worker_poll_seconds: float = Field(default=2.0, gt=0, le=60)
+    document_worker_max_attempts: int = Field(default=3, ge=1, le=10)
+    document_extraction_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    clamav_host: str = "clamav"
+    clamav_port: int = Field(default=3310, ge=1, le=65535)
+    clamav_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
 
     # ------------------------------------------------------------------
     # Authentication
@@ -47,13 +54,13 @@ class Settings(BaseSettings):
     auth_secret_key: str = Field(default="change-me-in-production")
     access_token_expire_minutes: int = Field(default=15)
 
-    # Rate limiting — intentionally permissive to accommodate shared college
+    # Rate limiting â€” intentionally permissive to accommodate shared college
     # networks (hostels, labs). Layered per-IP + per-email enforcement.
     auth_rate_limit_max_ip_attempts: int = Field(default=20)
     auth_rate_limit_max_email_attempts: int = Field(default=10)
     auth_rate_limit_window_seconds: int = Field(default=900)  # 15 minutes
 
-    # CORS — only the configured web app origin is allowed when credentials
+    # CORS â€” only the configured web app origin is allowed when credentials
     # (cookies) are in use. Wildcard + credentials is disallowed by the spec.
     web_app_url: str = Field(default="http://localhost:5173")
 
