@@ -19,6 +19,32 @@ export type StudentArticle = {
   source_citation: string | null;
 };
 
+export type KnowledgeCategory = { category: string; article_count: number };
+export type KnowledgeJurisdiction = { id: string; code: string; name: string; parent_id: string | null };
+export type StudentArticleFilters = {
+  q?: string;
+  category?: string;
+  jurisdiction?: string;
+  limit?: number;
+  offset?: number;
+};
+export type StudentArticleDetail = Omit<StudentArticle, "source_title" | "source_publisher" | "source_url" | "source_citation"> & {
+  version_number: number;
+  content: string;
+  source: {
+    id: string;
+    jurisdiction_id: string;
+    title: string;
+    publisher: string | null;
+    source_url: string;
+    citation: string | null;
+    retrieved_at: string;
+    effective_from: string | null;
+    effective_until: string | null;
+    is_active: boolean;
+  };
+};
+
 export type HelpResource = {
   id: string;
   name: string;
@@ -41,9 +67,27 @@ export type HelpResource = {
 };
 
 export const knowledgeApi = {
-  searchArticles(query: string, signal?: AbortSignal) {
-    const params = new URLSearchParams({ q: query, audience: "students", limit: "4" });
+  listArticles(filters: StudentArticleFilters = {}, signal?: AbortSignal) {
+    const params = new URLSearchParams({ audience: "students", limit: String(filters.limit ?? 12), offset: String(filters.offset ?? 0) });
+    const query = filters.q?.trim();
+    if (query) params.set("q", query);
+    if (filters.category) params.set("category", filters.category);
+    if (filters.jurisdiction) params.set("jurisdiction", filters.jurisdiction);
     return request<StudentArticle[]>(`/knowledge/articles?${params.toString()}`, { signal });
+  },
+  searchArticles(query: string, signal?: AbortSignal) {
+    return this.listArticles({ q: query, limit: 4 }, signal);
+  },
+  listCategories(jurisdiction?: string, signal?: AbortSignal) {
+    const params = new URLSearchParams();
+    if (jurisdiction) params.set("jurisdiction", jurisdiction);
+    return request<KnowledgeCategory[]>(`/knowledge/categories${params.size ? `?${params.toString()}` : ""}`, { signal });
+  },
+  listJurisdictions(signal?: AbortSignal) {
+    return request<KnowledgeJurisdiction[]>("/knowledge/jurisdictions", { signal });
+  },
+  getArticle(slug: string, signal?: AbortSignal) {
+    return request<StudentArticleDetail>(`/knowledge/articles/${encodeURIComponent(slug)}`, { signal });
   },
 };
 
