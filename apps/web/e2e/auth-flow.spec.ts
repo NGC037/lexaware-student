@@ -129,7 +129,16 @@ test("registers, signs in, onboards, refreshes, logs out, and signs in again", a
   expect(await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")).toBeTruthy();
   await page.getByLabel("Color theme").selectOption("dark");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  const darkPalette = await page.locator(".rights-hero h1").evaluate("heading => ({ primary: getComputedStyle(heading).color, secondary: getComputedStyle(document.querySelector('.rights-hero > p:last-child')).color, background: getComputedStyle(document.body).backgroundColor })") as { primary: string; secondary: string; background: string };
+  const darkPalette = await page.locator(".rights-hero h1").evaluate((heading) => {
+    const view = heading.ownerDocument.defaultView;
+    const description = heading.parentElement?.querySelector("p:last-child");
+    if (!view || !description) throw new Error("Rights Explorer hero description is missing.");
+    return {
+      primary: view.getComputedStyle(heading).color,
+      secondary: view.getComputedStyle(description).color,
+      background: view.getComputedStyle(heading.ownerDocument.body).backgroundColor,
+    };
+  });
   expect(contrastRatio(darkPalette.primary, darkPalette.background)).toBeGreaterThanOrEqual(4.5);
   expect(contrastRatio(darkPalette.secondary, darkPalette.background)).toBeGreaterThanOrEqual(4.5);
   await page.emulateMedia({ reducedMotion: "reduce" });

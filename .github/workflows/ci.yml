@@ -7,6 +7,40 @@ on:
     branches: ["main"]
 
 jobs:
+  frontend:
+    name: Frontend Test, Lint, Type-check, and Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Vitest
+        working-directory: apps/web
+        run: npm test
+
+      - name: ESLint
+        working-directory: apps/web
+        run: npm run lint
+
+      - name: TypeScript
+        working-directory: apps/web
+        run: npm run typecheck
+
+      - name: Production build
+        working-directory: apps/web
+        run: npm run build
+
   backend:
     name: Lint, Type-check, Migrate, and Test
     runs-on: ubuntu-latest

@@ -272,5 +272,4 @@ async def retry_document_job(session: AsyncSession, document: Document) -> bool:
     job.finished_at = None
     if document.status == DocumentStatus.FAILED:
         transition_document(document, DocumentStatus.VALIDATED)
-    await session.commit()
     return True

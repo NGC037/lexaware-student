@@ -7,6 +7,7 @@ settings = get_settings()
 redis_client: Redis = Redis(
     host=settings.redis_host,
     port=settings.redis_port,
+    db=settings.redis_db,
     decode_responses=True,
 )
 

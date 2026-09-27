@@ -9,6 +9,24 @@ function formatDate(value: string): string | null {
   return Number.isNaN(date.valueOf()) ? null : new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" }).format(date);
 }
 
+const sectionLabels: Record<string, string> = {
+  immediate_safety: "Immediate safety",
+  safety_considerations: "Safety considerations",
+  preserve_evidence: "Preserve relevant information",
+  reporting_options: "Reporting options",
+  information_to_prepare: "Information to prepare",
+  checklist: "Checklist",
+  escalation: "Further support",
+};
+
+function sectionLabel(section: string): string {
+  return sectionLabels[section] ?? section.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function contentLabel(value: string): string {
+  return value.replaceAll("_", " ").replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 export function ComplaintGuidesPage() {
   const [draft, setDraft] = useState({ category: "", jurisdiction: "" });
   const [filters, setFilters] = useState<GovernedContentFilters>({});
@@ -70,7 +88,7 @@ export function ComplaintGuidesPage() {
       {state === "error" && <><StatePanel kind="error" title="Complaint guidance is temporarily unavailable">Please check your connection and try again.</StatePanel><button className="workspace-retry" type="button" onClick={() => setRetry((value) => value + 1)}>Try again</button></>}
       {state === "ready" && guides.length === 0 && <StatePanel title="No published guides found">Try changing or clearing the category or jurisdiction filters.</StatePanel>}
       {state === "ready" && guides.length > 0 && <><ul className="governed-list">{guides.map((guide) => <li key={guide.id}>
-        <article className="governed-entry"><p className="governed-entry__meta">{guide.category} <span aria-hidden="true">·</span> {guide.jurisdiction.name}</p><h3><Link to={`/app/complaints/${encodeURIComponent(guide.slug)}`}>{guide.title}</Link></h3><p>{guide.short_description}</p><p className="governed-entry__source">Reviewed {formatDate(guide.reviewed_at) ?? "date unavailable"}</p></article>
+        <article className="governed-entry"><p className="governed-entry__meta">{contentLabel(guide.category)} <span aria-hidden="true">·</span> {guide.jurisdiction.name}</p><h3><Link to={`/app/complaints/${encodeURIComponent(guide.slug)}`}>{guide.title}</Link></h3><p>{guide.short_description}</p><p className="governed-entry__source">Reviewed {formatDate(guide.reviewed_at) ?? "date unavailable"}</p></article>
       </li>)}</ul>{moreError && <div className="rights-more-error" role="status">More guides could not be loaded. <button type="button" onClick={() => void loadMore()}>Try again</button></div>}{hasMore && <button className="button button--outline rights-load-more" type="button" disabled={loadingMore} onClick={() => void loadMore()}>{loadingMore ? "Loading..." : "Load more guides"}</button>}</>}
     </section>
   </div>;
@@ -81,14 +99,17 @@ export function ComplaintGuidePage() {
   const [guide, setGuide] = useState<ComplaintGuide | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error" | "not-found">("loading");
   const [retry, setRetry] = useState(0);
+  const [activeStep, setActiveStep] = useState<number | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
-    setState("loading"); setGuide(null);
-    complaintApi.get(slug, controller.signal).then((result) => { setGuide(result); setState("ready"); })
+    setState("loading"); setGuide(null); setActiveStep(null);
+    complaintApi.get(slug, controller.signal).then((result) => { setGuide({ ...result, guidance_steps: [...result.guidance_steps].sort((a, b) => a.position - b.position) }); setState("ready"); })
       .catch((error: unknown) => { if (!controller.signal.aborted) setState(error instanceof ApiError && error.status === 404 ? "not-found" : "error"); });
     return () => controller.abort();
   }, [slug, retry]);
+
+  const currentStep = activeStep === null ? undefined : guide?.guidance_steps[activeStep];
 
   return <div className="workspace-page governed-page governed-detail page-container">
     <Link className="governed-back" to="/app/complaints">&larr; All complaint guides</Link>
@@ -96,8 +117,12 @@ export function ComplaintGuidePage() {
     {state === "error" && <><StatePanel kind="error" title="This guide is temporarily unavailable">Please check your connection and try again.</StatePanel><button className="workspace-retry" type="button" onClick={() => setRetry((value) => value + 1)}>Try again</button></>}
     {state === "not-found" && <StatePanel title="This guide is not currently available">It may have changed or may no longer be published. Return to the current guide list.</StatePanel>}
     {state === "ready" && guide && <article className="complaint-guide" aria-labelledby="complaint-guide-title">
-      <header><p className="eyebrow">{guide.category} · {guide.jurisdiction.name}</p><h1 id="complaint-guide-title">{guide.title}</h1><p className="complaint-guide__summary">{guide.short_description}</p><p className="governed-entry__source">For {guide.audience} · Reviewed {formatDate(guide.reviewed_at) ?? "date unavailable"}</p></header>
-      {guide.guidance_steps.length > 0 && <section aria-labelledby="guidance-steps-title"><h2 id="guidance-steps-title">Guidance</h2><ol className="guidance-steps">{[...guide.guidance_steps].sort((a, b) => a.position - b.position).map((step) => <li key={step.position}><span className="guidance-steps__number" aria-hidden="true">{step.position}</span><div><p className="guidance-steps__section">{step.section.replaceAll("_", " ")}</p><h3>{step.title}</h3><p>{step.instruction}</p></div></li>)}</ol></section>}
+      <header><p className="eyebrow">{contentLabel(guide.category)} · {guide.jurisdiction.name}</p><h1 id="complaint-guide-title">{guide.title}</h1><p className="complaint-guide__summary">{guide.short_description}</p><p className="governed-entry__source">For {contentLabel(guide.audience)} · Reviewed {formatDate(guide.reviewed_at) ?? "date unavailable"}</p></header>
+      {guide.guidance_steps.length > 0 && <section aria-labelledby="guidance-steps-title"><h2 id="guidance-steps-title">Guidance</h2>
+        {activeStep === null ? <><p>Move through this guide one step at a time. You can go back at any point.</p><button className="button button--primary" type="button" onClick={() => setActiveStep(0)}>Start guide</button></>
+          : currentStep ? <><p role="status">Step {activeStep + 1} of {guide.guidance_steps.length}</p><article className="guidance-step" aria-live="polite"><p className="guidance-steps__section">{sectionLabel(currentStep.section)}</p><h3>{currentStep.title}</h3><p>{currentStep.instruction}</p></article><div className="guidance-step__actions"><button className="button button--outline" type="button" disabled={activeStep === 0} onClick={() => setActiveStep((step) => Math.max(0, (step ?? 1) - 1))}>Previous</button><button className="button button--primary" type="button" onClick={() => setActiveStep((step) => (step ?? 0) + 1)}>{activeStep === guide.guidance_steps.length - 1 ? "Finish guide" : "Next"}</button></div></>
+          : <div className="guidance-complete" role="status"><h3>Guide complete</h3><p>Use the checklist and reporting information above to plan a next step. This guide does not submit a report or complaint for you.</p><button className="button button--outline" type="button" onClick={() => setActiveStep(0)}>Review the guide</button></div>}
+      </section>}
     </article>}
   </div>;
 }

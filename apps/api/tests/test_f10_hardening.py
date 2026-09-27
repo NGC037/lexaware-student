@@ -42,6 +42,56 @@ def test_all_responses_have_server_generated_correlation_id() -> None:
     assert correlation_id != "client-value"
 
 
+def test_metrics_report_aggregate_route_status_and_latency_only() -> None:
+    client.get("/api/v1/health?email=private@example.com")
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain; version=0.0.4")
+    assert (
+        'lexaware_http_requests_total{method="GET",route="/api/v1/health",status="200"}'
+        in response.text
+    )
+    assert "lexaware_http_request_duration_seconds_bucket" in response.text
+    assert "private@example.com" not in response.text
+    assert 'route="/metrics"' not in response.text
+
+
+async def test_security_headers_preserve_multiple_auth_cookies() -> None:
+    from app.core.middleware import SecurityHeadersMiddleware
+
+    sent = []
+
+    async def app(scope, receive, send) -> None:
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [
+                    (b"set-cookie", b"lexaware_session=opaque"),
+                    (b"set-cookie", b"lexaware_csrf=csrf"),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def capture(message) -> None:
+        sent.append(message)
+
+    middleware = SecurityHeadersMiddleware(app)
+    await middleware(
+        {"type": "http", "method": "GET", "path": "/"},
+        receive,
+        capture,
+    )
+    headers = sent[0]["headers"]
+    cookies = [value for name, value in headers if name.lower() == b"set-cookie"]
+    assert cookies == [b"lexaware_session=opaque", b"lexaware_csrf=csrf"]
+    assert (b"x-content-type-options", b"nosniff") in headers
+
+
 def test_unhandled_exception_error_includes_response_correlation_id() -> None:
     from fastapi import APIRouter
 

@@ -74,6 +74,8 @@ describe("private document vault and review pages", () => {
     expect(await screen.findByRole("heading", { name: "Your vault is empty" })).toBeInTheDocument();
     expect(screen.getByText(/private to your account/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Upload document" })).toHaveAttribute("href", "#document-upload");
+    expect(screen.getByRole("link", { name: "Download demo internship agreement" })).toHaveAttribute("href", "/demo/demo-internship-agreement.pdf");
+    expect(screen.getByText("DEMO CONTENT - NOT A REAL LEGAL AGREEMENT")).toBeInTheDocument();
   });
 
   it("renders owner document metadata and backend lifecycle status", async () => {

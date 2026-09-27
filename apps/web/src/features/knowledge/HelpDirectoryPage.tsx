@@ -15,6 +15,10 @@ function formatDate(value: string): string | null {
   return Number.isNaN(date.valueOf()) ? null : new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" }).format(date);
 }
 
+function contentLabel(value: string): string {
+  return value.replaceAll("_", " ").replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 export function HelpDirectoryPage() {
   const [draft, setDraft] = useState({ category: "", jurisdiction: "", assistance_type: "" });
   const [filters, setFilters] = useState<GovernedContentFilters>({});
@@ -82,11 +86,11 @@ export function HelpDirectoryPage() {
         const phone = resource.phone?.replace(/[^\d+*#]/g, "");
         const email = resource.contact_email?.trim();
         return <li key={resource.id}><article className="governed-entry help-entry">
-          <p className="governed-entry__meta">{resource.resource_type} <span aria-hidden="true">·</span> {resource.assistance_type}</p>
+          <p className="governed-entry__meta">{contentLabel(resource.resource_type)} <span aria-hidden="true">·</span> {contentLabel(resource.assistance_type)}</p>
           <h3>{resource.name}</h3>
-          <p className="help-entry__category">{resource.category} <span aria-hidden="true">·</span> {resource.jurisdiction.name}</p>
+          <p className="help-entry__category">{contentLabel(resource.category)} <span aria-hidden="true">·</span> {resource.jurisdiction.name}</p>
           {resource.description && <p>{resource.description}</p>}
-          <dl className="help-entry__details"><dt>Contact method</dt><dd>{resource.contact_method.replaceAll("_", " ")}</dd><dt>Verification</dt><dd>Verified {formatDate(resource.verified_at) ?? "date unavailable"}</dd></dl>
+          <dl className="help-entry__details"><dt>Contact method</dt><dd>{contentLabel(resource.contact_method)}</dd><dt>Verification</dt><dd>Verified {formatDate(resource.verified_at) ?? "date unavailable"}</dd></dl>
           <div className="help-entry__links" aria-label={`Contact ${resource.name}`}>
             {phone && <a href={`tel:${phone}`}>Call {resource.phone}</a>}
             {email && <a href={`mailto:${encodeURIComponent(email)}`}>Email {email}</a>}

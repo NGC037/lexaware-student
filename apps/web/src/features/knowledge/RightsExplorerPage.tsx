@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router";
 import { knowledgeApi, type KnowledgeCategory, type KnowledgeJurisdiction, type StudentArticle } from "../../api/student-content";
 import { StatePanel } from "../../shared/components/StatePanel";
+import { categoryLabel, RIGHTS_DOMAINS } from "./rights-domains";
 
 const PAGE_SIZE = 12;
 
@@ -62,6 +63,11 @@ export function RightsExplorerPage() {
     setApplied({ q: "", category: "", jurisdiction: "" });
   }
 
+  function selectDomain(category: string) {
+    setDraftCategory(category);
+    setApplied((current) => ({ ...current, category }));
+  }
+
   async function loadMore() {
     if (loadingMore || !hasMore) return;
     const controller = new AbortController();
@@ -76,11 +82,39 @@ export function RightsExplorerPage() {
     finally { if (!controller.signal.aborted) setLoadingMore(false); }
   }
 
+  const selectedDomain = RIGHTS_DOMAINS.find((domain) => domain.category === applied.category);
+
   return <div className="workspace-page rights-page">
     <section className="rights-hero page-container" aria-labelledby="rights-title">
       <p className="eyebrow">Reviewed legal information</p>
       <h1 id="rights-title">Know Your Rights</h1>
       <p>Explore published guidance for students and practical considerations. Applicability can depend on your circumstances and location; review each source and consider qualified help for your situation.</p>
+    </section>
+    <section className="rights-domains page-container" aria-labelledby="rights-domains-title">
+      <div className="rights-results-heading"><div><p className="eyebrow">Browse by topic</p><h2 id="rights-domains-title">Explore student domains</h2></div></div>
+      <ul className="rights-domain-grid">
+        {RIGHTS_DOMAINS.map((domain) => {
+          const category = categories.find((item) => item.category === domain.category);
+          const countLabel = filtersState === "loading"
+            ? "Loading count…"
+            : filtersState === "error"
+              ? "Article count unavailable"
+              : category?.article_count
+              ? `${category.article_count} published ${category.article_count === 1 ? "article" : "articles"}`
+              : "No published guidance yet";
+          return <li key={domain.category}>
+            <button
+              aria-pressed={applied.category === domain.category}
+              className="rights-domain-card"
+              onClick={() => selectDomain(domain.category)}
+              type="button"
+            >
+              <span className="rights-domain-card__title">{domain.label}</span>
+              <span className="rights-domain-card__count">{countLabel}</span>
+            </button>
+          </li>;
+        })}
+      </ul>
     </section>
     <section className="rights-explorer page-container" aria-label="Search and filter guidance">
       <form className="rights-filters" onSubmit={applyFilters}>
@@ -89,7 +123,7 @@ export function RightsExplorerPage() {
         </label>
         <label>Category
           <select value={draftCategory} onChange={(event) => setDraftCategory(event.target.value)} disabled={filtersState !== "ready"}>
-            <option value="">All categories</option>{categories.map((item) => <option key={item.category} value={item.category}>{item.category}</option>)}
+            <option value="">All categories</option>{categories.map((item) => <option key={item.category} value={item.category}>{categoryLabel(item.category)}</option>)}
           </select>
         </label>
         <label>Jurisdiction
@@ -105,11 +139,11 @@ export function RightsExplorerPage() {
       <div className="rights-results-heading"><div><p className="eyebrow">Student knowledge base</p><h2 id="rights-results-title">Published guidance</h2></div></div>
       {listState === "loading" && <StatePanel kind="info" title="Loading published guidance">Showing current guidance that applies to students.</StatePanel>}
       {listState === "error" && <div><StatePanel kind="error" title="Guidance is temporarily unavailable">Please check your connection and try again.</StatePanel><button className="workspace-retry" type="button" onClick={() => setRetry((value) => value + 1)}>Try again</button></div>}
-      {listState === "ready" && articles.length === 0 && <StatePanel kind="empty" title="No guidance matched these filters">Try a broader search or clear one or more filters.</StatePanel>}
+      {listState === "ready" && articles.length === 0 && <StatePanel kind="empty" title={selectedDomain ? `No published guidance is available for ${selectedDomain.label} yet` : "No guidance matched these filters"}>Try another domain, a broader search, or clear one or more filters.</StatePanel>}
       {listState === "ready" && articles.length > 0 && <>
         <ul className="rights-article-list">{articles.map((article) => {
           const source = safeSource(article.source_url);
-          return <li key={article.id} className="rights-article"><div className="rights-article__meta"><span>{article.category}</span>{article.topic && <span>{article.topic}</span>}<span>{article.jurisdiction.name}</span></div>
+          return <li key={article.id} className="rights-article"><div className="rights-article__meta"><span>{categoryLabel(article.category)}</span>{article.topic && <span>{article.topic}</span>}<span>{article.jurisdiction.name}</span></div>
             <h3><Link to={"/app/rights/" + encodeURIComponent(article.slug)}>{article.title}</Link></h3>
             {article.summary && <p>{article.summary}</p>}
             {article.applicability_notes && <p className="rights-article__applicability"><strong>Applicability:</strong> {article.applicability_notes}</p>}

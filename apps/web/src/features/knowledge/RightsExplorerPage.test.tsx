@@ -52,7 +52,7 @@ describe("Rights Explorer", () => {
     expect(await screen.findByRole("heading", { name: article.title })).toBeInTheDocument();
     expect(screen.getByText("Official source", { exact: false })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /View source/ })).toHaveAttribute("href", article.source_url);
-    expect(screen.getByRole("option", { name: "education" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Education" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "India" })).toBeInTheDocument();
 
     await user.type(screen.getByRole("searchbox", { name: "Search guidance" }), "student rights");
@@ -61,6 +61,33 @@ describe("Rights Explorer", () => {
     await user.click(screen.getByRole("button", { name: "Apply filters" }));
     await waitFor(() => expect(knowledgeApi.listArticles).toHaveBeenLastCalledWith(
       { q: "student rights", category: "education", jurisdiction: "IN", limit: 12, offset: 0 }, expect.any(AbortSignal),
+    ));
+  });
+
+  it("shows all six domains with API-backed counts and filters by selected domain", async () => {
+    const user = userEvent.setup();
+    vi.mocked(knowledgeApi.listCategories).mockResolvedValue([
+      { category: "employment", article_count: 2 },
+      { category: "housing", article_count: 1 },
+      { category: "ragging", article_count: 3 },
+      { category: "cybercrime", article_count: 1 },
+      { category: "consumer_rights", article_count: 4 },
+      { category: "harassment", article_count: 0 },
+    ]);
+    renderAt();
+
+    const employment = await screen.findByRole("button", { name: "Internship & Employment 2 published articles" });
+    expect(screen.getByRole("button", { name: "Hostel & Rental 1 published article" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ragging 3 published articles" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cybercrime & Online Fraud 1 published article" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Consumer Rights 4 published articles" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Harassment & Safety No published guidance yet" })).toBeInTheDocument();
+
+    await user.click(employment);
+    expect(employment).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(knowledgeApi.listArticles).toHaveBeenLastCalledWith(
+      { q: "", category: "employment", jurisdiction: "", limit: 12, offset: 0 },
+      expect.any(AbortSignal),
     ));
   });
 
@@ -99,6 +126,7 @@ describe("Rights Explorer", () => {
     const user = userEvent.setup();
     renderAt("/app/rights/student-protections");
     expect(await screen.findByRole("heading", { name: article.title })).toBeInTheDocument();
+    expect(screen.getByText("Education")).toBeInTheDocument();
     expect(screen.getByText(/Read this source/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Applicability" })).toBeInTheDocument();
     expect(screen.getByText("Source retrieved")).toBeInTheDocument();

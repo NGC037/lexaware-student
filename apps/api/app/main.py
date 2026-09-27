@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.api.router import router
 from app.core.config import get_settings
 from app.core.logging import setup_logging
+from app.core.metrics import http_metrics
 from app.core.middleware import (
     RequestCorrelationIdMiddleware,
     SecurityHeadersMiddleware,
@@ -65,6 +67,11 @@ def create_application() -> FastAPI:
         prefix=settings.api_v1_prefix,
     )
 
+    @application.get("/metrics", include_in_schema=False)
+    async def metrics_endpoint() -> PlainTextResponse:
+        """Expose aggregate process metrics for a trusted internal scraper."""
+        return PlainTextResponse(http_metrics.render(), media_type="text/plain; version=0.0.4")
+
     # HTTPException and RequestValidationError have their own handlers in
     # FastAPI and must NOT be caught here - they produce correct 4xx responses.
     # Only truly unhandled exceptions reach this handler.
@@ -79,6 +86,16 @@ def create_application() -> FastAPI:
             request.method,
             request.url.path,
             type(exc).__name__,
+        )
+        route = getattr(request.scope.get("route"), "path", "unmatched")
+        started_at = getattr(request.state, "request_started_at", time.perf_counter())
+        http_metrics.observe(
+            request.method
+            if request.method in {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+            else "OTHER",
+            route,
+            500,
+            time.perf_counter() - started_at,
         )
         return JSONResponse(
             status_code=500,

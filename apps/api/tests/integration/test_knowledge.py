@@ -135,14 +135,15 @@ async def test_complete_knowledge_lifecycle_and_invariants(
     src_id = src_res.json()["id"]
 
     # Step 2: Create Knowledge Item and v1 Draft
-    slug = f"ugc-anti-ragging-rights-{uuid4().hex[:6]}"
+    unique_marker = uuid4().hex[:8]
+    slug = f"ugc-anti-ragging-rights-{unique_marker}"
     item_payload = {
         "jurisdiction_id": jur_id,
         "category": "ragging",
         "topic": "Anti-Ragging Regulations",
         "audience": "undergraduate_students",
         "slug": slug,
-        "title": "Understanding Your Rights Against Ragging in College",
+        "title": f"Understanding Your Rights Against Ragging in College {unique_marker}",
         "source_id": src_id,
         "content": (
             "Ragging is strictly prohibited under UGC regulations. "
@@ -265,14 +266,17 @@ async def test_complete_knowledge_lifecycle_and_invariants(
     assert pub_res.json()["published_at"] is not None
 
     # Step 8: Verify Student Public Read Boundary (Student can now discover & read v1)
-    student_list = await async_client.get("/api/v1/knowledge/articles?category=ragging")
+    student_list = await async_client.get(
+        "/api/v1/knowledge/articles",
+        params={"category": "ragging", "q": unique_marker},
+    )
     assert student_list.status_code == 200
     matched_list = [a for a in student_list.json() if a["slug"] == slug]
     assert len(matched_list) == 1
     assert matched_list[0]["category"] == "ragging"
     assert "UGC Regulations" in matched_list[0]["source_title"]
     published_search = await async_client.get(
-        "/api/v1/knowledge/articles", params={"q": "Ragging UGC regulations"}
+        "/api/v1/knowledge/articles", params={"q": unique_marker}
     )
     assert any(a["slug"] == slug for a in published_search.json())
 

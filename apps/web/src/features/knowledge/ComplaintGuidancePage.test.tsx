@@ -25,14 +25,25 @@ describe("complaint guidance pages", () => {
   beforeEach(() => { vi.mocked(complaintApi.list).mockReset(); vi.mocked(complaintApi.get).mockReset(); });
   afterEach(cleanup);
 
-  it("renders published guide details and actual structured steps in order", async () => {
+  it("guides a student through ordered steps with readable section names and previous/next controls", async () => {
     vi.mocked(complaintApi.get).mockResolvedValue(guide);
+    const user = userEvent.setup();
     renderAt("/app/complaints/student-conduct", <ComplaintGuidePage />);
     expect(await screen.findByRole("heading", { name: guide.title })).toBeInTheDocument();
-    const steps = screen.getAllByRole("listitem");
-    expect(steps[0]).toHaveTextContent("Consider safety first");
-    expect(steps[1]).toHaveTextContent("Keep relevant records");
+    expect(screen.queryByText("immediate_safety")).not.toBeInTheDocument();
     expect(screen.getByText(/Reviewed .*2026/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Start guide" }));
+    expect(screen.getByText("Step 1 of 2")).toBeInTheDocument();
+    expect(screen.getByText("Immediate safety")).toBeInTheDocument();
+    expect(screen.queryByText("Keep relevant records")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByText("Step 2 of 2")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Keep relevant records" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Previous" }));
+    expect(screen.getByRole("heading", { name: "Consider safety first" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    await user.click(screen.getByRole("button", { name: "Finish guide" }));
+    expect(screen.getByRole("heading", { name: "Guide complete" })).toBeInTheDocument();
   });
 
   it("loads the real student list contract, applies supported filters, and links to details", async () => {

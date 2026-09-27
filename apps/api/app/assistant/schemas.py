@@ -18,6 +18,15 @@ class AssistantStatus(StrEnum):
     RETRIEVAL_UNAVAILABLE = "retrieval_unavailable"
 
 
+class AssistantFeedbackRequest(BaseModel):
+    rating: Literal["helpful", "not_helpful"]
+    report_issue: bool = False
+
+
+class AssistantFeedbackResponse(BaseModel):
+    accepted: bool = True
+
+
 class AssistantIntent(StrEnum):
     LEGAL_AWARENESS = "legal_awareness"
     DEFINITIVE_VERDICT = "definitive_verdict"

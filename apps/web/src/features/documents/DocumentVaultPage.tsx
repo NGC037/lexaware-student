@@ -167,6 +167,7 @@ export function DocumentVaultPage() {
     <section id="document-upload" className="document-upload page-container" aria-labelledby="document-upload-title">
       <div className="document-upload__heading"><div><p className="eyebrow">Private PDF upload</p><h2 id="document-upload-title">Add a document</h2></div><span className="badge badge--neutral">PDF only</span></div>
       <p id="document-upload-help">PDFs up to 10 MiB and 250 pages can be uploaded. Password-protected PDFs, photos, and other formats are not supported. Scanned PDFs may not be reviewable; OCR is not provided.</p>
+      <aside className="document-demo-sample" aria-label="Fictional demo document"><strong>DEMO CONTENT - NOT A REAL LEGAL AGREEMENT</strong><p>Try the complete upload and analysis flow with this fictional, non-sensitive sample.</p><a href="/demo/demo-internship-agreement.pdf" download>Download demo internship agreement</a></aside>
       <form onSubmit={(event) => void upload(event)} aria-busy={uploading} noValidate>
         <label className="document-file-label" htmlFor="document-file">Choose a PDF from this device</label>
         <input ref={fileInput} id="document-file" name="file" type="file" accept=".pdf,application/pdf" aria-describedby={`document-upload-help${validationError ? " document-upload-error" : ""}`} aria-invalid={Boolean(validationError)} disabled={uploading} onChange={(event) => chooseFile(event.target.files?.[0] ?? null)} />

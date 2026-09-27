@@ -18,6 +18,20 @@ in tickets or logs.
    retry only through the authenticated API after correcting the underlying
    dependency. A malware scanner outage must never be treated as a clean scan.
 
+## Metrics
+
+Scrape `GET /metrics` from a trusted internal monitoring network. It exposes
+Prometheus text counters for HTTP requests by normalized route/method/status,
+request-duration histograms, assistant outcome routes, and aggregate assistant
+feedback rating/report counts. It does not label metrics with user IDs, email,
+document IDs, query strings, prompts, or response content. Counters are
+process-local and reset on restart; scrape every API instance and let the
+monitoring system aggregate them. The endpoint is not an admin dashboard and
+must not be exposed as a public student feature. Combine it with `/api/v1/health`,
+`/api/v1/ready`, worker logs/job states, and infrastructure monitoring. Feedback
+is optional and stores only the response correlation, rating, and report flag;
+free-form comments are not collected.
+
 ## Deploy and migrate
 
 1. Build and review the release artifact and CI results before deployment.
@@ -51,17 +65,23 @@ For the Compose PostgreSQL service, create a logical backup (substitute the
 deployment's protected credential mechanism; never place a real password in shell
 history):
 
-```powershell
-docker compose -f infra/docker/docker-compose.yml exec -T postgres pg_dump -U lexaware -Fc lexaware > lexaware.dump
+```sh
+docker exec lexaware-postgres pg_dump -U lexaware -Fc -f /tmp/lexaware.dump lexaware
+docker cp lexaware-postgres:/tmp/lexaware.dump ./lexaware.dump
 ```
 
 Restore into a fresh, isolated PostgreSQL database with the matching pgvector
 extension and verify the dump before directing application traffic to it:
 
-```powershell
-docker compose -f infra/docker/docker-compose.yml exec -T postgres createdb -U lexaware lexaware_restore
-Get-Content -AsByteStream lexaware.dump | docker compose -f infra/docker/docker-compose.yml exec -T postgres pg_restore -U lexaware -d lexaware_restore --clean --if-exists
+```sh
+docker exec lexaware-postgres createdb -U lexaware lexaware_restore
+docker cp ./lexaware.dump lexaware-postgres:/tmp/lexaware.dump
+docker exec lexaware-postgres pg_restore -U lexaware -d lexaware_restore /tmp/lexaware.dump
 ```
+
+After verification, remove the host/container dump using the approved retention
+policy and drop only the disposable restore database. Encrypt and restrict
+access to any retained backup before copying it off-host.
 
 Check migration state with `alembic current` and `alembic check`, then run
 representative account, knowledge, document metadata, and audit queries. Record
@@ -72,6 +92,38 @@ document bucket. Do not restore a bucket as public. Validate object keys and
 owner metadata before enabling downloads. Define and document recovery point and
 recovery time objectives with the deployment owner; the project does not claim
 measured objectives.
+
+## MinIO private-object backup and restore
+
+Use a dedicated MinIO client alias configured from the deployment secret store;
+do not put credentials in a script, shell history, or command output. Back up to
+encrypted storage outside the MinIO host. For a simple Compose deployment, `mc
+mirror --preserve` copies objects and supported metadata from the private bucket
+to an operator-controlled backup path:
+
+```sh
+mc mirror --preserve local/lexaware-documents-private /secure-backup/lexaware-documents-private
+```
+
+For recovery, create an empty private destination bucket and mirror the protected
+backup into it:
+
+```sh
+mc mb local/lexaware-documents-private-restore
+mc mirror --preserve /secure-backup/lexaware-documents-private local/lexaware-documents-private-restore
+mc anonymous set none local/lexaware-documents-private-restore
+```
+
+Compare object names and counts, then compare checksums for sampled or all
+objects using the deployment's checksum-capable storage tooling. Verify the
+destination anonymous policy is `none`, and retrieve a synthetic object using
+the service identity. Verify anonymous retrieval is denied before considering
+the restored bucket. The database stores object keys and ownership grants;
+restore a matching database snapshot and check owner-scoped application
+downloads before redirecting traffic. Never test recovery with a student's
+document or by making a bucket public. Mirror alone is not a versioned backup:
+production retention and point-in-time recovery require versioning/replication
+or immutable encrypted snapshots configured by the deployment owner.
 
 ## Secret rotation
 

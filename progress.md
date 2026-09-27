@@ -562,6 +562,118 @@ repository audit. Do not claim production release readiness until mandatory
 deployment and acceptance evidence is completed. No new roadmap phase is
 created.
 
+### Continued final release pass — 2026-09-27
+
+This entry supersedes the earlier provisional validation results above. The
+previous six failures were reproduced, diagnosed, and resolved:
+
+1. `test_login_and_me_flow`
+2. `test_account_suspension_immediately_terminates_session`
+3. `test_csrf_protection_and_logout_flow`
+4. `test_bearer_token_exempt_from_csrf`
+5. `test_role_authorization_dynamically_loaded_from_postgres`
+
+All five had the same production defect: `SecurityHeadersMiddleware` rebuilt all
+response headers in a dictionary, collapsing repeated `Set-Cookie` headers. The
+CSRF cookie replaced the HttpOnly session cookie. The middleware now replaces
+only its own security headers while preserving repeated headers, with direct
+regression coverage. All five login/session tests pass.
+
+6. `test_complete_knowledge_lifecycle_and_invariants` assumed its newly
+   published test article would be in the first 50-item category page. Persistent
+   integration data made that assumption false. The test now adds a unique title
+   marker and searches with the category filter, preserving the publication
+   visibility assertion without depending on pagination order. No production
+   search behavior changed.
+
+#### Monitoring and feedback hardening
+
+- Added a dependency-free Prometheus text endpoint at `/metrics` with bounded
+  route/method/status HTTP request counters, duration histograms, assistant route
+  outcomes (including escalations and provider/retrieval unavailability), and
+  aggregate feedback rating/report counters. Labels contain no user IDs, emails,
+  query strings, document IDs, prompts, or response bodies. Counters are per
+  process and reset on restart; deployment must scrape each API instance over a
+  trusted internal network.
+- Implemented the specification's missing assistant rating/report path using
+  audit metadata only. Feedback is owner-scoped by response correlation ID,
+  CSRF-protected for cookie sessions, idempotent, and accepts no free-form text.
+  The frontend now lets students mark a response helpful/not helpful or report a
+  problem. Added API, integration, and UI tests.
+- Extended the existing GitHub Actions workflow with frontend install, unit
+  tests, lint, TypeScript, and production build jobs. The hosted GitHub workflow
+  was not run from this local workspace.
+- Added a student/reviewer release acceptance checklist. Existing admin
+  feedback triage/operations dashboard is still absent; aggregate scrape metrics
+  do not replace that expressly described operator interface.
+
+#### Migration and recovery exercises
+
+- Alembic heads: **PASS** — one head, `f9a17b2c6d40`.
+- Alembic upgrade head: **PASS**.
+- Alembic check: **PASS** — no new upgrade operations detected.
+- PostgreSQL custom-format backup/restore: **PASS** against the local Compose
+  database and a temporary database. Restored row counts and revision matched:
+  users 2562, knowledge items 707, documents 96, revision
+  `f9a17b2c6d40`. The temporary database and dump were removed. No production
+  database was used.
+- MinIO object recovery: **PASS** with a synthetic fixture in unique temporary
+  buckets. `mc mirror --preserve` backup and restore content SHA-256 matched
+  (`b644119c9f394efb470fc0fde672f17c508ea56df5dd468e3b59cdc9757bc202`); restored
+  anonymous policy was private. Test buckets and fixture were removed. No
+  student document was used.
+- Exact backup, restore, and verification commands are in
+  `docs/runbooks/operations.md`.
+
+#### Final validation
+
+- Backend `pytest -v`: **PASS**, 103 passed, 0 failed (569 dependency/runtime
+  deprecation warnings).
+- Ruff check: **PASS**; Ruff format check: **PASS**; strict mypy: **PASS**.
+- Frontend Vitest: **PASS**, 90 tests across 14 files; ESLint: **PASS**;
+  TypeScript: **PASS**; production build: **PASS**.
+- Playwright E2E: **PASS**, 1 test in installed Chrome. It covered registration,
+  login/session, onboarding, dashboard/help, Rights Explorer search/filter/detail,
+  responsive/theme/error states, logout, and re-login. Its generated synthetic
+  accounts and sessions were removed. Assistant/document browser journeys are
+  not covered by the current Playwright spec; backend tests cover their API and
+  security paths.
+- `git diff --check`: pending final repository review.
+- Secret/artifact review: `.env` remains ignored/untracked; temporary backup
+  dumps and MinIO fixtures were removed; no private document was used.
+
+#### Remaining release blockers and status
+
+- Student and qualified content-reviewer acceptance are **NOT RUN — HUMAN
+  ACCEPTANCE REQUIRED**. The industrial spec calls for student usability testing
+  and a qualified reviewer, and phase 7 requires an accepted release candidate.
+  This is a project completion/release blocker, not evidence that may be inferred
+  from automated tests.
+- The described administrator dashboard/triage for stale content, failed jobs,
+  provider errors, user reports, and unresolved feedback is **NOT IMPLEMENTED**.
+  The scrape endpoint supplies aggregate metrics but does not satisfy the admin
+  operations interface by itself.
+- Production scraper/alerting/network restriction, backup retention automation,
+  and measured p95/recovery objectives are **NOT RUN — deployment owner
+  configuration required**. The project provides health/readiness, correlation,
+  logs/job state, metrics, and runbooks; it does not provision production
+  monitoring infrastructure.
+- Accessibility checklist human checks (keyboard journey, screen reader, forced
+  colors/zoom/touch), candidate-specific F9 chaincode acceptance rerun, and live
+  Gemini generation remain **NOT RUN**. Gemini was not called due prior quota
+  limits; deterministic/provider-mock safety tests passed.
+
+**LEXAWARE STUDENT PROJECT STATUS: NOT COMPLETE — HUMAN ACCEPTANCE AND THE
+SPECIFICATION-REQUIRED ADMIN/PRODUCTION OPERATIONS GATES REMAIN.** No F11/F12 or
+other roadmap phase has been created. No commit is made while the required
+monitoring and acceptance gates remain open.
+
+Final repository review on 2026-09-27: `git diff --check` passed; `.env` is
+ignored and untracked; no dump, log, generated browser output, or private
+document is staged. `README.md` remains the pre-existing local modification and
+was not edited or staged. All intended changes remain uncommitted because the
+release gates above are still open.
+
 #### Required admin operations triage dashboard (2026-09-27)
 
 - Added an admin-only operations API and dashboard for overdue published

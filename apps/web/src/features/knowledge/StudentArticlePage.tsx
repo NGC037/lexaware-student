@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router";
 import { ApiError } from "../../api/client";
 import { knowledgeApi, type StudentArticleDetail } from "../../api/student-content";
 import { StatePanel } from "../../shared/components/StatePanel";
+import { categoryLabel } from "./rights-domains";
 
 function safeSource(value: string): string | null {
   try { const url = new URL(value); return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : null; }
@@ -45,7 +46,7 @@ export function StudentArticlePage() {
 
   return <article className="rights-detail page-container">
     <Link className="rights-back" to="/app/rights">&larr; All guidance</Link>
-    <header className="rights-detail__header"><div className="rights-article__meta"><span>{article.category}</span>{article.topic && <span>{article.topic}</span>}<span>{article.jurisdiction.name}</span></div><h1>{article.title}</h1><p className="rights-detail__dek">Published student guidance | Version {article.version_number}</p>
+    <header className="rights-detail__header"><div className="rights-article__meta"><span>{categoryLabel(article.category)}</span>{article.topic && <span>{article.topic}</span>}<span>{article.jurisdiction.name}</span></div><h1>{article.title}</h1><p className="rights-detail__dek">Published student guidance | Version {article.version_number}</p>
       <div className="rights-detail__dates">{effectiveDate && <span>Effective {effectiveDate}</span>}{reviewedDate && <span>Last reviewed {reviewedDate}</span>}</div>
     </header>
     <div className="rights-detail__layout">

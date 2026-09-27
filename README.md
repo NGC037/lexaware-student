@@ -27,12 +27,13 @@ and escalation requirements visible to users.
 
 ### Frontend
 
-- React
+- React 19
 - TypeScript
 - Vite
-- Tailwind CSS
-- shadcn/ui
-- TanStack Query
+- React Router
+- Lucide React
+
+The frontend lives in `apps/web` and includes the public landing page, registration/login, cookie-backed session handling, a tab-local onboarding introduction, and the initial authenticated shell. The backend remains authoritative for authentication; onboarding completion is not persisted by the backend yet. See [frontend architecture, API contract, and setup](apps/web/docs/architecture.md). For real-browser testing, `npm run test:e2e` uses the configured local FastAPI API and creates a synthetic account, so run it only against a disposable development database.
 
 ### Backend
 

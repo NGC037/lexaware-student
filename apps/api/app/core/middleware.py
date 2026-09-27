@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.config import get_settings
+from app.core.metrics import http_metrics
 
 
 class RequestBodyTooLarge(Exception):
@@ -27,9 +29,29 @@ class RequestCorrelationIdMiddleware:
 
         correlation_id = str(uuid.uuid4())
         scope.setdefault("state", {})["correlation_id"] = correlation_id
+        started_at = time.perf_counter()
+        scope["state"]["request_started_at"] = started_at
 
         async def send_with_correlation_id(message: Message) -> None:
             if message["type"] == "http.response.start":
+                if scope.get("path") != "/metrics":
+                    route = getattr(scope.get("route"), "path", "unmatched")
+                    api_prefix = get_settings().api_v1_prefix.rstrip("/")
+                    if (
+                        route != "unmatched"
+                        and scope.get("path", "").startswith(f"{api_prefix}/")
+                        and not route.startswith(f"{api_prefix}/")
+                    ):
+                        route = f"{api_prefix}{route}"
+                    method = scope.get("method", "OTHER").upper()
+                    if method not in {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}:
+                        method = "OTHER"
+                    http_metrics.observe(
+                        method,
+                        route,
+                        int(message["status"]),
+                        time.perf_counter() - started_at,
+                    )
                 headers = [
                     (key, value)
                     for key, value in message.get("headers", [])
@@ -142,27 +164,33 @@ class SecurityHeadersMiddleware:
 
         async def send_with_security_headers(message: Message) -> None:
             if message["type"] == "http.response.start":
-                # Convert list to dict to overwrite any pre-existing headers
-                # (like those set by FileResponse) instead of appending duplicates.
-                headers_dict = {
-                    k.decode("latin-1").lower(): v.decode("latin-1")
-                    for k, v in message.get("headers", [])
+                security_headers = {
+                    "x-content-type-options": "nosniff",
+                    "x-frame-options": "DENY",
+                    "x-xss-protection": "0",
+                    "referrer-policy": "strict-origin-when-cross-origin",
+                    "permissions-policy": "geolocation=(), microphone=(), camera=()",
                 }
-                headers_dict["x-content-type-options"] = "nosniff"
-                headers_dict["x-frame-options"] = "DENY"
-                headers_dict["x-xss-protection"] = "0"
-                headers_dict["referrer-policy"] = "strict-origin-when-cross-origin"
-                headers_dict["permissions-policy"] = "geolocation=(), microphone=(), camera=()"
-
                 if is_production:
-                    headers_dict["strict-transport-security"] = (
+                    security_headers["strict-transport-security"] = (
                         "max-age=31536000; includeSubDomains"
                     )
 
-                message = dict(message)
-                message["headers"] = [
-                    (k.encode("latin-1"), v.encode("latin-1")) for k, v in headers_dict.items()
+                # Preserve repeated headers such as Set-Cookie. Rebuilding all
+                # headers in a dict silently dropped one of the auth cookies.
+                replaced = {name.encode("latin-1") for name in security_headers}
+                headers = [
+                    (name, value)
+                    for name, value in message.get("headers", [])
+                    if name.lower() not in replaced
                 ]
+                headers.extend(
+                    (name.encode("latin-1"), value.encode("latin-1"))
+                    for name, value in security_headers.items()
+                )
+
+                message = dict(message)
+                message["headers"] = headers
             await send(message)
 
         await self.app(scope, receive, send_with_security_headers)

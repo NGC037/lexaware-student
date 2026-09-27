@@ -10,7 +10,8 @@ async def test_postgresql_connectivity() -> None:
         user, database = result.one()
 
     assert user == "lexaware"
-    assert database == "lexaware"
+    assert database.startswith("lexaware_test_")
+    assert database != "lexaware"
 
 
 async def test_redis_connectivity() -> None:

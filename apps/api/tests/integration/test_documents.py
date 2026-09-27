@@ -5,6 +5,7 @@ import struct
 import threading
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import httpx
@@ -28,7 +29,7 @@ from app.db.models import (
     UserRole,
 )
 from app.db.session import AsyncSessionLocal
-from app.documents.analysis import hash_report_manifest
+from app.documents.analysis import extract_pdf, hash_report_manifest
 from app.documents.queue import claim_next_document_job, run_document_job
 from app.documents.router import get_object_storage
 from app.documents.scanner import ClamAVScanner
@@ -75,38 +76,17 @@ def blank_pdf() -> bytes:
     return stream.getvalue()
 
 
-def synthetic_internship_pdf() -> bytes:
-    """Build a fixed, harmless one-page PDF fixture with extractable contract text."""
-    content = (
-        b"BT /F1 12 Tf 72 720 Td (INTERNSHIP AGREEMENT) Tj "
-        b"0 -24 Td (This internship agreement describes stipend and training period.) Tj "
-        b"0 -24 Td (A service bond applies during the training period.) Tj "
-        b"0 -24 Td (The monthly stipend may be withheld under stated conditions.) Tj ET"
+def demo_internship_pdf() -> bytes:
+    """Read the same clearly fictional demo PDF offered by the student UI."""
+    path = (
+        Path(__file__).resolve().parents[4]
+        / "apps"
+        / "web"
+        / "public"
+        / "demo"
+        / "demo-internship-agreement.pdf"
     )
-    objects = [
-        b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
-        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-        b"<< /Length " + str(len(content)).encode() + b" >>\nstream\n" + content + b"\nendstream",
-    ]
-    pdf = bytearray(b"%PDF-1.4\n%fixed-fixture\n")
-    offsets = [0]
-    for number, obj in enumerate(objects, start=1):
-        offsets.append(len(pdf))
-        pdf.extend(f"{number} 0 obj\n".encode() + obj + b"\nendobj\n")
-    xref_offset = len(pdf)
-    pdf.extend(f"xref\n0 {len(offsets)}\n".encode())
-    pdf.extend(b"0000000000 65535 f \n")
-    for offset in offsets[1:]:
-        pdf.extend(f"{offset:010d} 00000 n \n".encode())
-    pdf.extend(
-        (
-            f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n"
-        ).encode()
-    )
-    return bytes(pdf)
+    return path.read_bytes()
 
 
 def scanner_server(verdict: bytes):
@@ -351,14 +331,17 @@ async def test_text_pdf_full_worker_flow_with_clamav_and_minio(
     app.dependency_overrides[get_object_storage] = lambda: storage
     _owner_id, owner_token = await make_user()
     _other_id, other_token = await make_user()
-    content = synthetic_internship_pdf()
-    assert content == synthetic_internship_pdf()
+    content = demo_internship_pdf()
+    assert content == demo_internship_pdf()
+    extracted_demo = extract_pdf(content)
+    assert "DEMO CONTENT - NOT A REAL LEGAL AGREEMENT" in extracted_demo.pages[0].text
+    assert not extracted_demo.needs_ocr
 
     try:
         uploaded = await async_client.post(
             "/api/v1/documents",
             headers=bearer(owner_token),
-            files={"file": ("synthetic-internship.pdf", content, "application/pdf")},
+            files={"file": ("demo-internship-agreement.pdf", content, "application/pdf")},
         )
         assert uploaded.status_code == 202
         document_id = UUID(uploaded.json()["document"]["id"])
@@ -507,7 +490,7 @@ async def test_infected_file_is_deleted_and_never_analyzed(
     uploaded = await async_client.post(
         "/api/v1/documents",
         headers=bearer(token),
-        files={"file": ("synthetic.pdf", synthetic_internship_pdf(), "application/pdf")},
+        files={"file": ("demo-internship-agreement.pdf", demo_internship_pdf(), "application/pdf")},
     )
     document_id = UUID(uploaded.json()["document"]["id"])
     async with AsyncSessionLocal() as session:
@@ -545,7 +528,7 @@ async def test_scanner_error_retries_without_extraction(
     uploaded = await async_client.post(
         "/api/v1/documents",
         headers=bearer(token),
-        files={"file": ("synthetic.pdf", synthetic_internship_pdf(), "application/pdf")},
+        files={"file": ("demo-internship-agreement.pdf", demo_internship_pdf(), "application/pdf")},
     )
     document_id = UUID(uploaded.json()["document"]["id"])
     async with AsyncSessionLocal() as session:
@@ -630,6 +613,33 @@ async def test_scanner_unavailable_blocks_processing_and_owner_can_retry(
             select(DocumentProcessingJob).where(DocumentProcessingJob.document_id == document_id)
         )
         assert job is not None and job.attempts == 3 and job.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_completed_document_retry_returns_conflict_not_server_error(
+    async_client: httpx.AsyncClient, memory_storage: MemoryStorage
+):
+    _owner_id, token = await make_user()
+    upload = await async_client.post(
+        "/api/v1/documents",
+        headers=bearer(token),
+        files={"file": ("completed.pdf", blank_pdf(), "application/pdf")},
+    )
+    document_id = UUID(upload.json()["document"]["id"])
+    async with AsyncSessionLocal() as session:
+        job = await session.scalar(
+            select(DocumentProcessingJob).where(DocumentProcessingJob.document_id == document_id)
+        )
+        document = await session.get(Document, document_id)
+        assert job is not None and document is not None
+        job.status = "completed"
+        job.finished_at = datetime.now(UTC)
+        document.status = DocumentStatus.COMPLETED
+        await session.commit()
+
+    retry = await async_client.post(f"/api/v1/documents/{document_id}/retry", headers=bearer(token))
+    assert retry.status_code == 409
+    assert retry.json()["detail"] == "This processing job cannot be retried now."
 
 
 @pytest.mark.asyncio
