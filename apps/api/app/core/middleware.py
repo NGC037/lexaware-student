@@ -1,8 +1,9 @@
-﻿"""ASGI middleware for LexAware Student API."""
+"""ASGI middleware for LexAware Student API."""
 
 from __future__ import annotations
 
 import json
+import uuid
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -11,6 +12,34 @@ from app.core.config import get_settings
 
 class RequestBodyTooLarge(Exception):
     pass
+
+
+class RequestCorrelationIdMiddleware:
+    """Attach a server-generated correlation ID to every HTTP request/response."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        correlation_id = str(uuid.uuid4())
+        scope.setdefault("state", {})["correlation_id"] = correlation_id
+
+        async def send_with_correlation_id(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = [
+                    (key, value)
+                    for key, value in message.get("headers", [])
+                    if key.lower() != b"x-correlation-id"
+                ]
+                headers.append((b"x-correlation-id", correlation_id.encode("ascii")))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_correlation_id)
 
 
 class UploadBodySizeLimitMiddleware:

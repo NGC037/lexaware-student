@@ -12,7 +12,11 @@ from fastapi.responses import JSONResponse
 from app.api.router import router
 from app.core.config import get_settings
 from app.core.logging import setup_logging
-from app.core.middleware import SecurityHeadersMiddleware, UploadBodySizeLimitMiddleware
+from app.core.middleware import (
+    RequestCorrelationIdMiddleware,
+    SecurityHeadersMiddleware,
+    UploadBodySizeLimitMiddleware,
+)
 from app.core.redis import close_redis_connection
 from app.db.session import engine
 
@@ -54,6 +58,7 @@ def create_application() -> FastAPI:
     )
     application.add_middleware(SecurityHeadersMiddleware)
     application.add_middleware(UploadBodySizeLimitMiddleware)
+    application.add_middleware(RequestCorrelationIdMiddleware)
 
     application.include_router(
         router,
@@ -77,10 +82,14 @@ def create_application() -> FastAPI:
         )
         return JSONResponse(
             status_code=500,
+            headers={
+                "X-Correlation-ID": str(getattr(request.state, "correlation_id", "unavailable"))
+            },
             content={
                 "detail": {
                     "code": "internal_server_error",
                     "message": "An unexpected server error occurred.",
+                    "correlation_id": getattr(request.state, "correlation_id", None),
                 }
             },
         )

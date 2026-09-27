@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 
 from fastapi.testclient import TestClient
 
@@ -32,6 +33,37 @@ def test_hsts_absent_in_non_production() -> None:
     response = client.get("/api/v1/health")
     # Test client runs against the development config (ENVIRONMENT != production).
     assert "strict-transport-security" not in response.headers
+
+
+def test_all_responses_have_server_generated_correlation_id() -> None:
+    response = client.get("/api/v1/health", headers={"X-Correlation-ID": "client-value"})
+    correlation_id = response.headers["x-correlation-id"]
+    assert str(uuid.UUID(correlation_id)) == correlation_id
+    assert correlation_id != "client-value"
+
+
+def test_unhandled_exception_error_includes_response_correlation_id() -> None:
+    from fastapi import APIRouter
+
+    crash_router = APIRouter()
+
+    @crash_router.get("/test-crash-correlation")
+    async def crash_endpoint() -> None:
+        raise RuntimeError("internal details must not leak")
+
+    app.include_router(crash_router, prefix="/api/v1")
+    try:
+        response = client.get("/api/v1/test-crash-correlation")
+        assert response.status_code == 500
+        correlation_id = response.headers["x-correlation-id"]
+        assert response.json()["detail"]["correlation_id"] == correlation_id
+        assert "internal details" not in response.text
+    finally:
+        app.routes[:] = [
+            route
+            for route in app.routes
+            if getattr(route, "path", "") != "/api/v1/test-crash-correlation"
+        ]
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-﻿from sqlalchemy import text
+from sqlalchemy import text
 
 from app.core.redis import redis_client
 from app.db.session import engine

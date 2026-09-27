@@ -471,3 +471,93 @@ Status: implementation and validation complete.
 - Configured HSTS (Strict-Transport-Security) to be active only in production to prevent localhost development HTTP lockouts.
 - Added global exception handler to intercept unhandled server errors, returning generic 500 JSON without exposing stack traces, paths, or credentials, while allowing HTTPException and RequestValidationError to operate normally.
 - Verified all integration tests, unit tests, linters, and type checkers pass.
+
+### Final release audit — 2026-09-27
+
+This is the final specification-based audit, not a new roadmap increment. F1–F9
+and F10 sub-phase 1 are recorded above as implemented. Repository review confirms
+the core authentication, governed knowledge, complaint/help, assistant, private
+document, and provenance paths have focused tests; F9 is treated as complete and
+was not modified. This audit does not independently certify deployment controls
+or user acceptance that cannot be exercised from this checkout.
+
+#### Final hardening completed
+
+- Added `docs/runbooks/operations.md` with deployment, rollback, migration,
+  secret rotation, database/object recovery, dependency outage, harmful-response,
+  resource deactivation, and deletion procedures. It explicitly records that
+  production monitoring, backup automation, and measured recovery objectives
+  must be supplied and exercised by the deployment owner.
+- Added server-generated `X-Correlation-ID` values to all HTTP responses and
+  included the ID in generic internal-error responses. Added tests for normal
+  response IDs, rejecting client-provided IDs, and safe correlated 500 errors.
+- No database, F9 migration, chaincode, AI provider architecture, storage
+  architecture, or README changes were made.
+
+#### Specification gate assessment
+
+- **Identity, authorization, document privacy, upload limits/scanning, AI
+  routing/grounding, and F9 acceptance:** implementation and focused automated
+  coverage are present in the repository. Final full-suite results are recorded
+  below; they are not a substitute for a production threat review.
+- **Operations:** runbook now exists. Production backup automation and a
+  recorded database plus private-object restore exercise remain absent. The
+  specification requires tested restoration, so this is a mandatory release
+  blocker until an operator completes and records the exercise.
+- **Observability:** request correlation is implemented. Aggregate production
+  metrics/traces/alerting and measured latency targets are not provisioned or
+  evidenced. These remain deployment requirements before production acceptance.
+- **Content governance/admin, privacy disclosures/provider contractual review,
+  student and qualified-reviewer acceptance testing, and deployment/staging
+  evidence:** this checkout does not provide sufficient evidence to certify all
+  specification acceptance conditions. These are not asserted complete.
+- **Accessibility:** application components include keyboard, semantic, status,
+  responsive, and reduced-motion work documented in the feature entries above.
+  A full WCAG 2.2 AA human audit (screen reader, forced colors, zoom, touch) is
+  not evidenced here.
+- **AI live provider:** no live Gemini generation was used for this audit.
+  Existing deterministic/provider-mock and retrieval tests are the basis for
+  code-level safety assessment; provider quota and operational deployment remain
+  external limitations.
+- **Optional deferred work:** OCR, production Fabric provisioning, richer
+  dashboards/activity persistence, and other version-2 roadmap features remain
+  deferred where identified above. They are not represented as MVP blockers
+  unless explicitly required by the release conditions.
+
+#### Validation for this final audit
+
+- `python -m pytest`: **FAIL**, 95 passed and 6 failed on the final full run,
+  including five existing authentication integration checks that do not receive
+  the session cookie and one knowledge lifecycle integration check. Setting
+  `ENVIRONMENT=development` did not resolve those failures. The newly added
+  correlated-500 test initially exposed Starlette's outer exception middleware
+  bypassing inner response middleware; that issue was fixed and the focused
+  hardening suite passed (7/7). The six remaining full-suite failures are release
+  blockers until diagnosed and passing.
+- Ruff lint: **PASS** (`ruff check app tests --no-cache`).
+- Ruff format: **PASS**, full repository check (`ruff format --check app tests
+  --no-cache`). Removed leading UTF-8 BOM formatting differences in the touched
+  middleware and infrastructure test module.
+- mypy: **PASS** (`mypy app`, strict configuration).
+- Alembic heads: **PASS**, one head `f9a17b2c6d40`. Database migration upgrade
+  and drift check were not run as part of the final audit.
+- Focused hardening tests: **PASS**, 7 passed.
+- Frontend unit tests: **PASS**, 88 tests across 14 files. Initial sandboxed
+  esbuild attempt was denied parent-directory access; authorized retry passed.
+- Frontend lint and TypeScript check: **PASS**.
+- Frontend production build: **PASS**.
+- `git diff --check`: **PASS** (README's pre-existing modification remains
+  untouched and unstaged).
+- Secret/artifact review: `.env` is ignored by Git and is not tracked; generated
+  frontend build output and private documents were not staged. No F9 migration
+  was changed.
+
+#### Release status
+
+**LEXAWARE STUDENT PROJECT STATUS: NOT COMPLETE — RELEASE ACCEPTANCE PENDING.**
+The implementation is substantially present, but the specification's tested
+backup/restore, production monitoring/diagnostics, full release validation, and
+student plus qualified-reviewer acceptance evidence are not established by this
+repository audit. Do not claim production release readiness until mandatory
+deployment and acceptance evidence is completed. No new roadmap phase is
+created.
