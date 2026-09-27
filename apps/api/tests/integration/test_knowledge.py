@@ -665,7 +665,9 @@ async def test_search_and_category_discovery(async_client: httpx.AsyncClient) ->
         "reimbursement",
         "unfair course contracts",
     ):
-        response = await async_client.get("/api/v1/knowledge/articles", params={"q": term})
+        response = await async_client.get(
+            "/api/v1/knowledge/articles", params={"q": f"{term} {unique_keyword}"}
+        )
         assert response.status_code == 200
         assert any(article["slug"] == slug for article in response.json())
 

@@ -561,3 +561,17 @@ student plus qualified-reviewer acceptance evidence are not established by this
 repository audit. Do not claim production release readiness until mandatory
 deployment and acceptance evidence is completed. No new roadmap phase is
 created.
+
+#### Required admin operations triage dashboard (2026-09-27)
+
+- Added an admin-only operations API and dashboard for overdue published
+  knowledge/complaint guidance/help resources, failed document processing jobs,
+  assistant provider/retrieval failures, reported assistant responses, and
+  unresolved assistant feedback. The queues are bounded to 100 records per
+  source and omit document names/content, prompts, user IDs, and credentials.
+- Administrators can mark feedback reviewed; this records a metadata-only audit
+  event. Server-side role checks protect both reading and resolution; the
+  frontend role gate only controls navigation and route display.
+- Added API authorization/empty-queue and UI loading/empty/error/category
+  coverage. Student, qualified reviewer, and accessibility acceptance remain
+  human release gates.

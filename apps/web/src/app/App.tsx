@@ -17,6 +17,14 @@ import { OnboardingPage } from "../features/onboarding/OnboardingPage";
 import { AuthenticatedLayout } from "../shared/layout/AuthenticatedLayout";
 import { PublicAuthLayout } from "../shared/layout/PublicAuthLayout";
 import { SiteLayout } from "../shared/layout/SiteLayout";
+import { AdminOperationsPage } from "../features/application/AdminOperationsPage";
+import { useAuth } from "./auth/auth-context";
+
+function AdminOperationsRoute() {
+  const { session } = useAuth();
+  if (session.status !== "authenticated" || !session.user.roles.includes("admin")) return <Navigate replace to="/app" />;
+  return <AdminOperationsPage />;
+}
 
 export function App() {
   return <BrowserRouter><AuthProvider><Routes>
@@ -34,6 +42,7 @@ export function App() {
         <Route path="/app/complaints" element={<ComplaintGuidesPage />} />
         <Route path="/app/complaints/:slug" element={<ComplaintGuidePage />} />
         <Route path="/app/help" element={<HelpDirectoryPage />} />
+        <Route path="/app/admin/operations" element={<AdminOperationsRoute />} />
       </Route>
     </Route></Route>
   </Routes></AuthProvider></BrowserRouter>;
