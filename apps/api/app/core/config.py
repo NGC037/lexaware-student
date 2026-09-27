@@ -30,6 +30,7 @@ class Settings(BaseSettings):
 
     redis_host: str = "localhost"
     redis_port: int = 6379
+    redis_db: int = Field(default=0, ge=0, le=15)
 
     s3_endpoint: str = "http://localhost:9000"
     s3_access_key: str = "lexaware"
@@ -78,6 +79,7 @@ class Settings(BaseSettings):
     # AI providers are opt-in. Keys remain secret values and are never included in
     # settings reprs, audit metadata, or provider error messages.
     ai_provider: str = "disabled"
+    demo_mode_enabled: bool = False
     gemini_model: str = "gemini-3.8-flash"
     gemini_api_key: SecretStr | None = None
     gemini_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
@@ -97,13 +99,23 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_ai_configuration(self) -> Settings:
-        if self.ai_provider not in {"disabled", "gemini"}:
-            raise ValueError("AI_PROVIDER must be 'disabled' or 'gemini'.")
+        if self.ai_provider not in {"disabled", "gemini", "demo"}:
+            raise ValueError("AI_PROVIDER must be 'disabled', 'gemini', or 'demo'.")
         if self.embedding_provider not in {"disabled", "gemini"}:
             raise ValueError("EMBEDDING_PROVIDER must be 'disabled' or 'gemini'.")
         key_missing = (
             self.gemini_api_key is None or not self.gemini_api_key.get_secret_value().strip()
         )
+        if self.demo_mode_enabled and (
+            self.environment.casefold() not in {"development", "local", "demo"}
+            or self.postgres_host.strip().casefold()
+            not in {"localhost", "localhost.", "127.0.0.1", "::1"}
+        ):
+            raise ValueError("DEMO_MODE_ENABLED is allowed only in local development.")
+        if self.ai_provider == "demo" and not self.demo_mode_enabled:
+            raise ValueError("AI_PROVIDER=demo requires DEMO_MODE_ENABLED=true.")
+        if self.is_production and self.ai_provider == "demo":
+            raise ValueError("The deterministic demo provider is disabled in production.")
         if self.ai_provider == "gemini" and key_missing:
             raise ValueError("GEMINI_API_KEY is required when AI_PROVIDER=gemini.")
         if self.embedding_provider == "gemini" and key_missing:

@@ -26,6 +26,16 @@ describe("assistant API client", () => {
     expect(JSON.parse(String(init.body))).toEqual({ message: "What does this clause mean?", jurisdiction: "IN", topic: "contract" });
   });
 
+  it("submits bounded response feedback through the shared CSRF client", async () => {
+    document.cookie = "lexaware_csrf=csrf-test-token; path=/";
+    await assistantApi.submitFeedback("trace-id", { rating: "not_helpful", report_issue: true });
+    const [input, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(new URL(input).pathname).toBe("/api/v1/assistant/messages/trace-id/feedback");
+    expect(init.method).toBe("POST");
+    expect(new Headers(init.headers).get("X-CSRF-Token")).toBe("csrf-test-token");
+    expect(JSON.parse(String(init.body))).toEqual({ rating: "not_helpful", report_issue: true });
+  });
+
   it("preserves the structured response contract", async () => {
     const response: AssistantResponse = {
       status: "answer", classification: {

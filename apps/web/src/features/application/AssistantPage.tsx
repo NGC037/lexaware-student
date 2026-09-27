@@ -76,11 +76,23 @@ function UrgentResourceEntry({ resource }: { resource: AssistantUrgentResource }
 }
 
 function AssistantResult({ response }: { response: AssistantResponse }) {
+  const [feedbackState, setFeedbackState] = useState<"idle" | "submitting" | "sent" | "error">("idle");
   const urgentText = response.urgent_help && response.urgent_help !== response.escalation
     ? response.urgent_help
     : response.escalation;
   const hasSources = response.sources.length > 0;
   const hasLimitations = response.limitations.length > 0;
+
+  async function submitFeedback(rating: "helpful" | "not_helpful", reportIssue = false) {
+    if (feedbackState === "submitting" || feedbackState === "sent") return;
+    setFeedbackState("submitting");
+    try {
+      await assistantApi.submitFeedback(response.trace.correlation_id, { rating, report_issue: reportIssue });
+      setFeedbackState("sent");
+    } catch {
+      setFeedbackState("error");
+    }
+  }
 
   return <div className={`assistant-result assistant-result--${response.status}`}>
     <header className="assistant-result__header">
@@ -101,6 +113,15 @@ function AssistantResult({ response }: { response: AssistantResponse }) {
         {response.uncertainty && <section className="assistant-support-section"><h3>Uncertainty</h3><p>{response.uncertainty}</p></section>}
       </aside>
     </div>
+    <section className="assistant-feedback" aria-label="Rate or report this response">
+      <p>Was this response useful?</p>
+      <button className="button button--quiet" type="button" disabled={feedbackState === "submitting" || feedbackState === "sent"} onClick={() => void submitFeedback("helpful")}>Helpful</button>
+      <button className="button button--quiet" type="button" disabled={feedbackState === "submitting" || feedbackState === "sent"} onClick={() => void submitFeedback("not_helpful")}>Not helpful</button>
+      <button className="button button--quiet" type="button" disabled={feedbackState === "submitting" || feedbackState === "sent"} onClick={() => void submitFeedback("not_helpful", true)}>Report a problem</button>
+      {feedbackState === "submitting" && <span role="status">Sending feedback…</span>}
+      {feedbackState === "sent" && <span role="status">Thank you. Your feedback was recorded.</span>}
+      {feedbackState === "error" && <span role="alert">Feedback could not be sent. Please try again.</span>}
+    </section>
   </div>;
 }
 

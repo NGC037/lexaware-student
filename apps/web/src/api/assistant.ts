@@ -130,4 +130,10 @@ export const assistantApi = {
       signal,
     });
   },
+  submitFeedback(correlationId: string, payload: { rating: "helpful" | "not_helpful"; report_issue: boolean }) {
+    return request<{ accepted: boolean }>(`/assistant/messages/${encodeURIComponent(correlationId)}/feedback`, {
+      method: "POST",
+      body: payload,
+    });
+  },
 };

@@ -7,6 +7,7 @@ import httpx
 import pytest
 from sqlalchemy import select
 
+import app.assistant.router as assistant_router
 from app.assistant.provider import DeterministicMockProvider, ProviderUnavailableError
 from app.assistant.router import (
     get_ai_provider,
@@ -15,6 +16,7 @@ from app.assistant.router import (
 )
 from app.assistant.schemas import ProviderRequest, ProviderResponse
 from app.auth.tokens import create_session
+from app.core.config import Settings
 from app.db.models import (
     AuditEvent,
     HelpResource,
@@ -221,6 +223,79 @@ async def setup_assistant_data() -> tuple[str, str, str, str]:
 
 
 @pytest.mark.asyncio
+async def test_configured_demo_runs_grounded_flow_and_keeps_safety_routes(
+    async_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token, jurisdiction, _, slug = await setup_assistant_data()
+    settings = Settings(
+        _env_file=None,
+        environment="development",
+        postgres_host="localhost",
+        ai_provider="demo",
+        demo_mode_enabled=True,
+        embedding_provider="disabled",
+    )
+    monkeypatch.setattr(assistant_router, "get_settings", lambda: settings)
+    embedding_provider = get_embedding_provider()
+    retrieval_config = get_retrieval_config()
+    app.dependency_overrides[get_embedding_provider] = lambda: embedding_provider
+    app.dependency_overrides[get_retrieval_config] = lambda: retrieval_config
+    try:
+        normal = await async_client.post(
+            "/api/v1/assistant/messages",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "message": "What should I check before reviewing a tenant deposit?",
+                "jurisdiction": jurisdiction,
+            },
+        )
+        urgent = await async_client.post(
+            "/api/v1/assistant/messages",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"message": "I am in immediate danger right now."},
+        )
+        verdict = await async_client.post(
+            "/api/v1/assistant/messages",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "message": "Tell me definitively whether this clause is illegal.",
+                "jurisdiction": jurisdiction,
+            },
+        )
+        missing_jurisdiction = await async_client.post(
+            "/api/v1/assistant/messages",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"message": "How should I review a rental deposit?"},
+        )
+        unsupported = await async_client.post(
+            "/api/v1/assistant/messages",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"message": "What is the football score?", "jurisdiction": jurisdiction},
+        )
+    finally:
+        app.dependency_overrides.pop(get_embedding_provider, None)
+        app.dependency_overrides.pop(get_retrieval_config, None)
+
+    assert normal.status_code == 200, normal.text
+    answer = normal.json()
+    assert answer["status"] == "answer", answer.get("trace", {}).get("validation_outcomes")
+    assert answer["trace"]["provider_name"] == "deterministic-mock"
+    assert answer["trace"]["model_identifier"] == "mock-v1"
+    assert answer["trace"]["embedding_model"] == "deterministic-hash-v1"
+    assert answer["trace"]["retrieval_state"] == "grounded"
+    assert f"knowledge:{slug}:v1" in answer["trace"]["knowledge_references"]
+    assert isinstance(embedding_provider, DeterministicFakeEmbeddingProvider)
+    assert retrieval_config.embedding_model == embedding_provider.model_identifier
+    assert urgent.json()["status"] == "escalate"
+    assert urgent.json()["trace"]["provider_name"] is None
+    assert verdict.json()["status"] == "refuse"
+    assert verdict.json()["trace"]["provider_name"] is None
+    assert missing_jurisdiction.json()["status"] == "clarify"
+    assert missing_jurisdiction.json()["trace"]["retrieval_state"] == "jurisdiction_required"
+    assert unsupported.json()["status"] == "out_of_scope"
+
+
+@pytest.mark.asyncio
 async def test_assistant_retrieves_postgres_fts_and_audits_metadata_only(
     async_client: httpx.AsyncClient,
 ) -> None:
@@ -291,6 +366,29 @@ async def test_high_risk_skips_provider_and_missing_auth_is_401(
     assert embedding_provider_override.calls == 0
     urgent = response.json()["urgent_resources"]
     assert [resource["name"] for resource in urgent] == ["Current student legal aid"]
+    correlation_id = response.json()["trace"]["correlation_id"]
+    feedback = await async_client.post(
+        f"/api/v1/assistant/messages/{correlation_id}/feedback",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"rating": "not_helpful", "report_issue": True},
+    )
+    assert feedback.status_code == 200 and feedback.json() == {"accepted": True}
+    duplicate_feedback = await async_client.post(
+        f"/api/v1/assistant/messages/{correlation_id}/feedback",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"rating": "helpful", "report_issue": False},
+    )
+    assert duplicate_feedback.status_code == 200
+    other_token, _, _, _ = await setup_assistant_data()
+    cross_account_feedback = await async_client.post(
+        f"/api/v1/assistant/messages/{correlation_id}/feedback",
+        headers={"Authorization": f"Bearer {other_token}"},
+        json={"rating": "helpful"},
+    )
+    assert cross_account_feedback.status_code == 404
+    metrics = await async_client.get("/metrics")
+    assert 'lexaware_assistant_responses_total{outcome="escalate"}' in metrics.text
+    assert 'lexaware_assistant_feedback_total{rating="not_helpful",reported="true"}' in metrics.text
     unauthenticated = await async_client.post(
         "/api/v1/assistant/messages",
         json={"message": "tenant rights", "jurisdiction": jurisdiction},

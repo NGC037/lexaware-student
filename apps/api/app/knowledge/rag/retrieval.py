@@ -136,6 +136,33 @@ async def hybrid_search(
         .limit(selected.fts_candidates)
     )
     lexical_rows = (await db.execute(lexical_statement)).all()
+    if not lexical_rows:
+        # Natural-language questions often include action words absent from the source text.
+        # Retry with an OR query for their terms, while keeping the same jurisdiction and
+        # publication/review eligibility filters. This only broadens lexical recall when the
+        # stricter all-terms query found nothing.
+        fallback_terms = re.findall(r"[\w]+", normalized)
+        fallback_terms = [term for term in fallback_terms if len(term) >= 3]
+        if fallback_terms:
+            fallback_query = func.websearch_to_tsquery(
+                selected.fts_configuration, " OR ".join(fallback_terms)
+            )
+            fallback_statement = (
+                joins.add_columns(func.ts_rank_cd(vector, fallback_query).label("rank"))
+                .where(
+                    vector.op("@@")(fallback_query)
+                    | func.lower(KnowledgeItem.title).ilike(pattern, escape="\\")
+                    | func.lower(KnowledgeItem.category).ilike(pattern, escape="\\")
+                    | func.lower(KnowledgeItem.topic).ilike(pattern, escape="\\")
+                )
+                .order_by(
+                    func.ts_rank_cd(vector, fallback_query).desc(),
+                    KnowledgeItem.slug,
+                    KnowledgeVersion.version_number,
+                )
+                .limit(selected.fts_candidates)
+            )
+            lexical_rows = (await db.execute(fallback_statement)).all()
 
     try:
         query_vectors = await provider.embed_texts([normalized], task_type="RETRIEVAL_QUERY")

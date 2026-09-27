@@ -5,7 +5,7 @@ import { ApiError } from "../../api/client";
 import { assistantApi, type AssistantResponse } from "../../api/assistant";
 import { AssistantPage } from "./AssistantPage";
 
-vi.mock("../../api/assistant", () => ({ assistantApi: { send: vi.fn() } }));
+vi.mock("../../api/assistant", () => ({ assistantApi: { send: vi.fn(), submitFeedback: vi.fn() } }));
 
 function makeResponse(status: AssistantResponse["status"]): AssistantResponse {
   return {
@@ -28,7 +28,7 @@ function makeResponse(status: AssistantResponse["status"]): AssistantResponse {
 }
 
 describe("guided legal awareness assistant", () => {
-  beforeEach(() => vi.mocked(assistantApi.send).mockReset());
+  beforeEach(() => { vi.mocked(assistantApi.send).mockReset(); vi.mocked(assistantApi.submitFeedback).mockReset(); });
   afterEach(cleanup);
 
   it.each([
@@ -48,6 +48,19 @@ describe("guided legal awareness assistant", () => {
     expect(await screen.findByRole("heading", { name: heading })).toBeInTheDocument();
     expect(screen.getByText(`Backend guidance for ${status}.`)).toBeInTheDocument();
     expect(screen.queryByText(/private-prompt|private-retrieval|private-provider|private-model|trace-private/)).not.toBeInTheDocument();
+  });
+
+  it("submits one response rating without collecting free-form feedback text", async () => {
+    vi.mocked(assistantApi.send).mockResolvedValue(makeResponse("answer"));
+    vi.mocked(assistantApi.submitFeedback).mockResolvedValue({ accepted: true });
+    const user = userEvent.setup();
+    render(<AssistantPage />);
+    await user.type(screen.getByRole("textbox", { name: "What would you like help understanding?" }), "What should I check?");
+    await user.click(screen.getByRole("button", { name: "Get guidance" }));
+    await user.click(await screen.findByRole("button", { name: "Helpful" }));
+    expect(assistantApi.submitFeedback).toHaveBeenCalledWith("trace-private", { rating: "helpful", report_issue: false });
+    expect(await screen.findByText("Thank you. Your feedback was recorded.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Helpful" })).toBeDisabled();
   });
 
   it("validates blank input, shows a character count, and trims optional request fields", async () => {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from collections.abc import Callable
 from typing import Any, Protocol
@@ -9,6 +10,7 @@ from typing import Any, Protocol
 from app.assistant.schemas import (
     AssistantProviderContent,
     AssistantStatus,
+    AssistantStep,
     ProviderRequest,
     ProviderResponse,
 )
@@ -247,25 +249,92 @@ def _error_category(error: Exception) -> str:
 
 
 class DeterministicMockProvider:
-    """Explicit test/development provider; never configured as a production model."""
+    """Deterministic local demo provider using only an already retrieved governed citation."""
 
     async def generate(self, request: ProviderRequest) -> ProviderResponse:
-        reference = request.governed_context[0].reference_key
-        title = request.governed_context[0].title
+        candidate = request.governed_context[0]
+        reference = candidate.reference_key
+        question = request.structured_input.message.casefold()
+        if re.search(r"\b(internship|employment|job|offer|stipend|salary)\b", question):
+            explanation = (
+                "Use the retrieved DEMO guidance to organize questions about the written offer, "
+                "role, duration, payment terms, supervision, and exit terms."
+            )
+            next_step = "Save the complete offer and mark any term you need clarified in writing."
+        elif re.search(r"\b(hostel|rental|rent|tenant|landlord|deposit|room)\b", question):
+            explanation = (
+                "Use the retrieved DEMO guidance to compare the written stay terms, charges, "
+                "payment dates, inventory, and local rules."
+            )
+            next_step = (
+                "Keep the agreement, payment receipts, inventory, and dated repair messages."
+            )
+        elif re.search(r"\b(cyber|fraud|phishing|scam|upi|payment)\b", question):
+            explanation = (
+                "Use the retrieved DEMO guidance to find the official reporting route and "
+                "organize transaction references and original messages."
+            )
+            next_step = (
+                "Contact your bank or payment provider through its official channel promptly."
+            )
+        elif re.search(r"\b(ragging|senior|freshers?)\b", question):
+            explanation = (
+                "Use the retrieved DEMO guidance to identify a safer place, trusted support, "
+                "and your institution's current reporting route."
+            )
+            next_step = "If it is safe, keep relevant messages and note dates without editing them."
+        elif re.search(r"\b(harass(?:ment|ed)?|safety|threat|unsafe|violence)\b", question):
+            explanation = (
+                "Use the retrieved DEMO guidance to consider immediate safety and identify "
+                "a trusted institutional or local support route."
+            )
+            next_step = "If danger is immediate, move to a safer place and seek urgent help."
+        else:
+            explanation = (
+                "The retrieved published guidance may help you identify questions to check, "
+                "but it cannot determine your legal position or outcome."
+            )
+            next_step = "Review the listed source and note the facts or dates that remain unclear."
         return ProviderResponse(
             content=AssistantProviderContent(
                 status=AssistantStatus.ANSWER,
                 what_this_may_mean=(
-                    f"The approved guidance titled {title!r} may be relevant. "
-                    "Your options depend on the facts and applicable rules."
+                    f"DEMO explanation: {explanation} The source selected by retrieval is listed "
+                    "below. This does not decide how any rule applies to you."
                 ),
                 relevant_facts_or_dependencies=[
-                    "The applicable jurisdiction and exact facts matter."
+                    f"The retrieved material is for {candidate.jurisdiction_name}.",
+                    "Your location, dates, documents, and institution may affect the next step.",
                 ],
-                next_steps=[],
+                next_steps=[
+                    AssistantStep(text=next_step),
+                    AssistantStep(
+                        text="Open the listed source and check its current version and scope."
+                    ),
+                    AssistantStep(
+                        text=(
+                            "Write down the relevant dates and keep copies of related "
+                            "documents or messages."
+                        )
+                    ),
+                    AssistantStep(
+                        text=(
+                            "Ask your institution or a qualified local adviser about "
+                            "questions the source does not answer."
+                        )
+                    ),
+                ],
                 citation_keys=[reference],
-                limitations=["This is general legal awareness, not legal advice."],
-                uncertainty="A qualified local adviser can assess your circumstances.",
+                limitations=[
+                    "DEMO MODE: this deterministic explanation is not legal advice "
+                    "or a legal verdict.",
+                    "The source may not cover every law, local rule, or fact "
+                    "relevant to your case.",
+                ],
+                uncertainty=(
+                    "The cited material cannot establish the outcome without the complete facts "
+                    "and applicable local rules."
+                ),
             ),
             provider_name="deterministic-mock",
             model_identifier="mock-v1",

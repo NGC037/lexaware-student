@@ -89,6 +89,7 @@ _PATTERNS: tuple[tuple[RiskCategory, tuple[str, ...]], ...] = (
     (
         RiskCategory.DEFINITIVE_VERDICT,
         (
+            r"\bdefinitively\b.{0,80}\b(?:legal|illegal|enforceable|unenforceable)\b",
             r"\bis (?:this|that|it) illegal\b",
             r"\bis this (?:definitely|certainly) (?:legal|illegal)\b",
             r"\bwill i definitely win\b",
